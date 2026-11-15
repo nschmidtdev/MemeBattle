@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800">
+  <rect width="800" height="520" fill="#aee0f5"/>
+  <rect y="520" width="800" height="280" fill="#7fb069"/>
+  <ellipse cx="400" cy="640" rx="260" ry="60" fill="#6a9a55"/>
+  <!-- flames -->
+  <g opacity="0.95">
+    <path d="M 400 220 Q 470 300 450 340 Q 520 330 540 420 Q 600 430 585 530 Q 620 600 520 610 Q 560 660 470 660 L 330 660 Q 240 660 280 610 Q 180 600 215 530 Q 200 430 260 420 Q 280 330 350 340 Q 330 300 400 220" fill="#f5a623"/>
+    <path d="M 400 280 Q 450 340 435 375 Q 490 380 505 450 Q 550 470 535 545 Q 555 590 480 595 Q 505 630 440 632 L 360 632 Q 295 630 320 595 Q 245 590 265 545 Q 250 470 295 450 Q 310 380 365 375 Q 350 340 400 280" fill="#f7d154"/>
+  </g>
+  <!-- dog -->
+  <g transform="translate(400,470)">
+    <ellipse cx="0" cy="60" rx="120" ry="95" fill="#8a6a45"/>
+    <rect x="-70" y="110" width="34" height="80" rx="14" fill="#7a5c3a"/>
+    <rect x="36" y="110" width="34" height="80" rx="14" fill="#7a5c3a"/>
+    <path d="M 110 30 Q 175 10 170 70 Q 168 100 130 95" fill="#8a6a45"/>
+    <circle cx="85" cy="5" r="55" fill="#9a7a52"/>
+    <path d="M 45 -40 L 25 -75 L 75 -50 Z" fill="#6a4c30"/>
+    <path d="M 125 -40 L 145 -75 L 95 -50 Z" fill="#6a4c30"/>
+    <circle cx="65" cy="-5" r="8" fill="#222"/>
+    <circle cx="105" cy="-5" r="8" fill="#222"/>
+    <ellipse cx="85" cy="28" rx="22" ry="16" fill="#4a3524"/>
+    <ellipse cx="85" cy="22" rx="12" ry="9" fill="#222"/>
+    <path d="M 60 45 Q 85 62 110 45" stroke="#4a3524" stroke-width="6" fill="none" stroke-linecap="round"/>
+    <path d="M -120 40 Q -180 60 -165 110" stroke="#8a6a45" stroke-width="26" fill="none" stroke-linecap="round"/>
+  </g>
+</svg>

@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800">
+  <rect width="800" height="800" fill="#dfe6ee"/>
+  <rect y="560" width="800" height="240" fill="#9aa4b0"/>
+  <rect x="0" y="380" width="800" height="40" fill="#c3ccd6"/>
+  <!-- girlfriend (left, angry) -->
+  <g transform="translate(150,300)">
+    <rect x="-70" y="120" width="140" height="260" rx="55" fill="#3f6fb5"/>
+    <circle cx="0" cy="60" r="70" fill="#f2cfab"/>
+    <path d="M -70 40 Q 0 -50 70 40 L 70 70 Q 40 30 0 34 Q -40 30 -70 70 Z" fill="#7a3b1e"/>
+    <path d="M -45 48 L -15 42" stroke="#33241a" stroke-width="8" stroke-linecap="round"/>
+    <path d="M 45 48 L 15 42" stroke="#33241a" stroke-width="8" stroke-linecap="round"/>
+    <circle cx="-26" cy="62" r="8" fill="#2b2b2b"/>
+    <circle cx="26" cy="62" r="8" fill="#2b2b2b"/>
+    <path d="M -22 108 Q 0 92 22 108" stroke="#a05540" stroke-width="8" fill="none" stroke-linecap="round"/>
+    <path d="M 62 170 L 150 130" stroke="#3f6fb5" stroke-width="34" stroke-linecap="round"/>
+    <circle cx="158" cy="126" r="20" fill="#f2cfab"/>
+  </g>
+  <!-- boyfriend (center, surprised) -->
+  <g transform="translate(400,320)">
+    <rect x="-70" y="115" width="140" height="265" rx="55" fill="#5a8a5a"/>
+    <circle cx="0" cy="55" r="72" fill="#ecc39a"/>
+    <path d="M -72 30 Q 0 -55 72 30 Q 30 5 0 5 Q -30 5 -72 30" fill="#5a3a22"/>
+    <circle cx="-26" cy="58" r="11" fill="#fff"/>
+    <circle cx="26" cy="58" r="11" fill="#fff"/>
+    <circle cx="-26" cy="58" r="5" fill="#2b2b2b"/>
+    <circle cx="26" cy="58" r="5" fill="#2b2b2b"/>
+    <ellipse cx="0" cy="102" rx="14" ry="18" fill="#5c3226"/>
+  </g>
+  <!-- other woman (right, walking away) -->
+  <g transform="translate(650,270)">
+    <path d="M -45 150 L -60 400 L 60 400 L 45 150 Z" fill="#c0392b"/>
+    <rect x="-48" y="110" width="96" height="70" rx="30" fill="#c0392b"/>
+    <circle cx="0" cy="70" r="58" fill="#f5d3b0"/>
+    <path d="M -58 40 Q 0 -35 58 40 Q 58 90 40 120 L 20 60 Q 0 40 -20 60 L -40 120 Q -58 90 -58 40" fill="#2e1d14"/>
+    <circle cx="-20" cy="72" r="6" fill="#2b2b2b"/>
+    <circle cx="20" cy="72" r="6" fill="#2b2b2b"/>
+    <path d="M -14 100 Q 0 110 14 100" stroke="#a05540" stroke-width="6" fill="none" stroke-linecap="round"/>
+  </g>
+</svg>

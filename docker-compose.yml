@@ -1,0 +1,38 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: meme
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: meme_battle
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U meme -d meme_battle"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://meme:secret@db:5432/meme_battle?schema=public
+      PORT: "3000"
+      UPLOAD_DIR: /data/uploads
+      # Overridable via a local .env file or shell environment (compose
+      # substitutes ${ADMIN_EMAIL} / ${ADMIN_PASSWORD}).
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@localhost}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-memeadmin}
+    volumes:
+      - uploads:/data/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  uploads:

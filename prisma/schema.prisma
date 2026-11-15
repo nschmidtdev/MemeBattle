@@ -1,0 +1,58 @@
+generator client {
+  provider      = "prisma-client-js"
+  // "native" covers the local dev machine; the explicit debian targets make
+  // the client work in the Docker image regardless of which OpenSSL version
+  // Prisma detects at runtime (slim images sometimes fall back to 1.1.x).
+  binaryTargets = ["native", "debian-openssl-3.0.x", "debian-openssl-1.1.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String          @id @default(cuid())
+  email        String?         @unique
+  role         String          @default("player")
+  passwordHash String?
+  salt         String?
+  createdAt    DateTime        @default(now())
+  sessions     AdminSession[]
+}
+
+model AdminSession {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+}
+
+model Pack {
+  id          String     @id @default(cuid())
+  name        String
+  description String?
+  isPublic    Boolean    @default(true)
+  isActive    Boolean    @default(true)
+  sortOrder   Int        @default(0)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  templates   Template[]
+}
+
+model Template {
+  id         String   @id @default(cuid())
+  packId     String
+  pack       Pack     @relation(fields: [packId], references: [id], onDelete: Cascade)
+  name       String
+  imageKey   String
+  isFreeform Boolean  @default(false)
+  boxes      Json
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([packId])
+}
