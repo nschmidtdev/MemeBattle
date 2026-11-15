@@ -37,6 +37,9 @@ pack with 7 templates, and creates the admin user.
 - Admin panel: <http://localhost:3000/admin>
 - Default admin: `admin@localhost` / `memeadmin` (set your own in `.env` — see below).
 
+If port 3000 is already in use on your machine, set `APP_PORT` in `.env`
+(e.g. `APP_PORT=3100`) and open <http://localhost:3100> instead.
+
 Postgres data and uploaded images persist in the `pgdata` and `uploads` volumes.
 Remove them with `docker compose down -v`.
 
@@ -85,14 +88,15 @@ All configuration is via environment variables (see `.env.example`):
 | Variable         | Default                              | Description                                        |
 | ---------------- | ------------------------------------ | -------------------------------------------------- |
 | `DATABASE_URL`   | `postgresql://meme:secret@localhost:5432/meme_battle?schema=public` | Postgres connection string |
-| `PORT`           | `3000`                               | HTTP port                                          |
+| `PORT`           | `3000`                               | HTTP port the app listens on (Docker: always 3000 inside the container) |
+| `APP_PORT`       | `3000`                               | Host port the Docker Compose setup maps the app to (Docker only) |
 | `CORS_ORIGIN`    | same-origin (`*` in dev)             | Allowed origin for socket.io                       |
 | `ADMIN_EMAIL`    | —                                    | Admin login email. The admin user is created on first boot. |
 | `ADMIN_PASSWORD` | — (auto-generated, printed to log)   | Admin password. Pin it to make login deterministic. |
 | `UPLOAD_DIR`     | `./data/uploads`                     | Where uploaded template images are stored (Docker: `/data/uploads`) |
 
-With Docker Compose, `ADMIN_EMAIL` and `ADMIN_PASSWORD` are read from the `.env`
-file next to `docker-compose.yml` (or your shell environment).
+With Docker Compose, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, and `APP_PORT` are read from
+the `.env` file next to `docker-compose.yml` (or your shell environment).
 
 ## Project structure
 

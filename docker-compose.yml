@@ -18,7 +18,8 @@ services:
     build: .
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      # Overridable via a local .env file or shell environment: APP_PORT=3100
+      - "${APP_PORT:-3000}:3000"
     environment:
       DATABASE_URL: postgresql://meme:secret@db:5432/meme_battle?schema=public
       PORT: "3000"
