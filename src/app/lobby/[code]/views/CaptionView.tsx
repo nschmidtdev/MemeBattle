@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { CaptionSubmission, FreeformLine, TemplateData } from '@/lib/types'
 import FreeformEditor from './FreeformEditor'
 
@@ -8,6 +8,8 @@ interface Props {
   template: TemplateData | null
   round: number
   totalRounds: number
+  rerollsLeft: number
+  onReroll: () => void
   onSubmit: (submission: CaptionSubmission) => void
 }
 
@@ -15,33 +17,39 @@ interface Props {
  * Caption phase. Every template is edited with the freeform editor:
  * if the template ships pre-placed boxes they become editable starting
  * lines — the player can move, restyle, delete them and add more.
+ * Rerolling trades the template but keeps the texts already placed.
  */
-export default function CaptionView({ template, round, totalRounds, onSubmit }: Props) {
+export default function CaptionView({ template, round, totalRounds, rerollsLeft, onReroll, onSubmit }: Props) {
   const [lines, setLines] = useState<FreeformLine[]>([])
   const [submitted, setSubmitted] = useState(false)
+  const linesRef = useRef(lines)
+  linesRef.current = lines
 
-  // reset when a new template arrives for the round
+  // reset when a new template arrives for the round; on a reroll the already
+  // placed lines are kept (only the very first empty editor is prefilled)
   useEffect(() => {
     setSubmitted(false)
     if (!template) {
       setLines([])
       return
     }
-    setLines(
-      template.boxes.map((b) => ({
-        id: b.id,
-        text: '',
-        x: b.x,
-        y: b.y,
-        w: b.w,
-        fontSize: b.fontSize,
-        color: b.color,
-        stroke: b.stroke,
-        font: b.font,
-        align: b.align,
-        rotation: b.rotation,
-      })),
-    )
+    if (linesRef.current.length === 0) {
+      setLines(
+        template.boxes.map((b) => ({
+          id: b.id,
+          text: '',
+          x: b.x,
+          y: b.y,
+          w: b.w,
+          fontSize: b.fontSize,
+          color: b.color,
+          stroke: b.stroke,
+          font: b.font,
+          align: b.align,
+          rotation: b.rotation,
+        })),
+      )
+    }
   }, [template])
 
   if (!template) {
@@ -69,9 +77,21 @@ export default function CaptionView({ template, round, totalRounds, onSubmit }: 
         <h2 className="font-display text-2xl uppercase tracking-wide">
           Round <span className="text-sun">{round}</span> / {totalRounds}
         </h2>
-        <span className="rounded-full border border-line bg-night2 px-3 py-1 text-xs text-dim">
-          {template.name}
-        </span>
+        <div className="flex items-center gap-2">
+          {template && (
+            <span className="hidden rounded-full border border-line bg-night2 px-3 py-1 text-xs text-dim sm:inline">
+              {template.name}
+            </span>
+          )}
+          <button
+            className="rounded-full border border-sky/60 px-3 py-1.5 text-sm font-bold text-sky transition hover:bg-sky/10 disabled:cursor-default disabled:opacity-40"
+            disabled={submitted || rerollsLeft <= 0}
+            title={rerollsLeft > 0 ? 'Trade this template for a different one' : 'No rerolls left this round'}
+            onClick={onReroll}
+          >
+            🔄 Template <span className="text-xs">({rerollsLeft})</span>
+          </button>
+        </div>
       </header>
 
       <div className="rounded-2xl border border-line bg-card p-3 shadow-xl sm:p-4">

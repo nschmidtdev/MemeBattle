@@ -2,6 +2,8 @@
 
 import type { FinalMeme, RoundResult } from '@/lib/types'
 import MemeView from '@/components/MemeView'
+import { loadImage, memeToPngDataUrl } from '@/lib/meme'
+import { imageUrl } from '@/lib/images'
 
 export interface RankingEntry {
   playerId: string
@@ -34,6 +36,20 @@ const STEP_H = ['h-44', 'h-36', 'h-28']
 
 function scoreCls(n: number) {
   return n > 0 ? 'text-mint' : n < 0 ? 'text-rose' : 'text-dim'
+}
+
+/** Render the meme at full size and trigger a PNG download. */
+async function downloadMeme(m: FinalMeme) {
+  try {
+    const img = await loadImage(imageUrl(m.template.imageKey))
+    const url = memeToPngDataUrl(m.template, m.submission, img, 1024)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `meme-r${m.round}-${m.username.toLowerCase().replace(/\W+/g, '-')}.png`
+    a.click()
+  } catch {
+    // image unavailable — nothing to download
+  }
 }
 
 function Avatar({ entry, size = 'h-9 w-9 text-base' }: { entry: { username: string; color: string }; size?: string }) {
@@ -129,10 +145,21 @@ export default function ResultsView(props: Props) {
               {gallery.map((m, i) => (
                 <figure
                   key={`${m.round}-${m.playerId}-${i}`}
-                  className={`overflow-hidden rounded-2xl border bg-night2 ${
-                    i === 0 ? 'border-sun/70 shadow-[0_0_18px_rgba(255,201,60,0.25)]' : 'border-line'
+                  className={`relative overflow-hidden rounded-2xl border bg-night2 ${
+                    i === 0
+                      ? 'border-sun/70 shadow-[0_0_18px_rgba(255,201,60,0.25)]'
+                      : m.playerId === props.myId
+                        ? 'border-punch/70'
+                        : 'border-line'
                   }`}
                 >
+                  <button
+                    className="absolute right-2 top-2 z-10 rounded-lg border border-line bg-night/80 px-2 py-1 text-sm backdrop-blur transition hover:border-sky hover:text-sky"
+                    title="Download this meme as PNG"
+                    onClick={() => downloadMeme(m)}
+                  >
+                    ⬇
+                  </button>
                   <div className="meme-canvas-wrap border-none bg-black">
                     <MemeView template={m.template} submission={m.submission} maxDim={320} className="max-h-56 w-auto max-w-full" />
                   </div>

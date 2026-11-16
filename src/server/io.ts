@@ -151,6 +151,13 @@ export function initSockets(io: Server) {
       if (err) emitError(socket, err)
     })
 
+    socket.on(Events.Reroll, () => {
+      const b = socket.data.mb as BoundSocket | undefined
+      if (!b) return
+      const err = b.lobby.reroll(socket.id)
+      if (err) emitError(socket, err)
+    })
+
     socket.on(Events.Vote, (data: Record<string, unknown>) => {
       const b = socket.data.mb as BoundSocket | undefined
       if (!b) return

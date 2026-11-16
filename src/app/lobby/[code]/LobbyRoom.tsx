@@ -43,7 +43,7 @@ export default function LobbyRoom({ code }: { code: string }) {
   const [muted, setMutedState] = useState(false)
   const [now, setNow] = useState(0)
 
-  const [caption, setCaption] = useState<{ template: TemplateData | null; round: number; totalRounds: number } | null>(null)
+  const [caption, setCaption] = useState<{ template: TemplateData | null; round: number; totalRounds: number; rerollsLeft: number } | null>(null)
   const [voting, setVoting] = useState<{ round: number; memes: MemeInfo[]; current: number } | null>(null)
   const [roundResult, setRoundResult] = useState<RoundResult | null>(null)
   const [gameOver, setGameOver] = useState<GameStateOver | null>(null)
@@ -104,18 +104,19 @@ export default function LobbyRoom({ code }: { code: string }) {
     socket.on(Events.LobbyEmpty, () => router.replace('/'))
     socket.on(Events.PlayerKick, onKick)
     socket.on(Events.PhaseCaption, ({ round, totalRounds, timeLeft }: { round: number; totalRounds: number; timeLeft: number }) => {
-      setCaption({ template: null, round, totalRounds })
+      setCaption({ template: null, round, totalRounds, rerollsLeft: 3 })
       setVoting(null)
       setRoundResult(null)
       setGameOver(null)
       startTimer(timeLeft)
       sounds.countdown()
     })
-    socket.on('caption:template', ({ template, timeLeft }: { template: TemplateData; timeLeft?: number }) => {
+    socket.on(Events.CaptionTemplate, ({ template, timeLeft, rerollsLeft }: { template: TemplateData; timeLeft?: number; rerollsLeft?: number }) => {
       setCaption((prev) => ({
         template,
         round: prev?.round ?? 1,
         totalRounds: prev?.totalRounds ?? 1,
+        rerollsLeft: typeof rerollsLeft === 'number' ? rerollsLeft : (prev?.rerollsLeft ?? 0),
       }))
       if (typeof timeLeft === 'number') startTimer(timeLeft)
     })
@@ -196,6 +197,9 @@ export default function LobbyRoom({ code }: { code: string }) {
   const submitCaption = useCallback((sub: CaptionSubmission) => {
     socketRef.current?.emit(Events.CaptionSubmit, sub)
     sounds.submit()
+  }, [])
+  const rerollTemplate = useCallback(() => {
+    socketRef.current?.emit(Events.Reroll)
   }, [])
   const castVote = useCallback((index: number, value: VoteValue) => {
     socketRef.current?.emit(Events.Vote, { index, value })
@@ -379,7 +383,7 @@ export default function LobbyRoom({ code }: { code: string }) {
       ) : state.phase === 'lobby' ? (
         <LobbyView state={state} myId={myId} onSettings={sendSettings} onStart={startGame} onKick={kick} />
       ) : state.phase === 'caption' && caption ? (
-        <CaptionView key={caption.round} template={caption.template} round={caption.round} totalRounds={caption.totalRounds} onSubmit={submitCaption} />
+        <CaptionView key={caption.round} template={caption.template} round={caption.round} totalRounds={caption.totalRounds} rerollsLeft={caption.rerollsLeft} onReroll={rerollTemplate} onSubmit={submitCaption} />
       ) : state.phase === 'voting' && voting ? (
         <VotingView key={voting.round} round={voting.round} memes={voting.memes} current={voting.current} myId={myId} onVote={castVote} />
       ) : state.phase === 'roundResults' && roundResult ? (

@@ -144,6 +144,7 @@ export const Events = {
   Settings: 'lobby:settings',
   Start: 'lobby:start',
   CaptionSubmit: 'caption:submit',
+  Reroll: 'caption:reroll',
   Vote: 'vote:cast',
   PublicList: 'public:list',
   PlayAgain: 'game:play-again',

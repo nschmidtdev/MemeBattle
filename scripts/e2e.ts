@@ -118,6 +118,16 @@ async function main() {
   const [tplA, tplB] = await Promise.all([aTpl, bTpl])
   ok('both got a template', !!tplA.template?.imageKey && !!tplB.template?.imageKey, [tplA.template?.name, tplB.template?.name])
 
+  // reroll: A trades the template once (texts are kept client-side)
+  const aTpl2 = waitEvent(A, 'caption:template', 5000)
+  A.emit('caption:reroll')
+  const rerolled = await aTpl2
+  ok(
+    'reroll deals a different template',
+    !!rerolled.template?.imageKey && rerolled.template?.imageKey !== tplA.template?.imageKey && rerolled.rerollsLeft === 2,
+    { from: tplA.template?.imageKey, to: rerolled.template?.imageKey, rerollsLeft: rerolled.rerollsLeft },
+  )
+
   // duplicate submit must be rejected
   A.emit('caption:submit', { texts: { x: 'first' }, lines: [] })
   const dupErr = waitEvent(A, 'client:error', 5000).catch(() => null)
@@ -136,6 +146,8 @@ async function main() {
   ok('voting phase: 2 memes', pvA.memes?.length === 2 && pvA.current === 0, { memes: pvA.memes?.length, current: pvA.current })
   const bMeme = pvA.memes?.find((m: any) => m.playerId === jB.playerId)
   ok('freeform lines carried into voting', bMeme?.submission?.lines?.length === 1, bMeme?.submission)
+  const aMeme = pvA.memes?.find((m: any) => m.playerId === jA.playerId)
+  ok('rerolled template used for voting', aMeme?.template?.imageKey === rerolled.template?.imageKey, [aMeme?.template?.imageKey, rerolled.template?.imageKey])
 
   // Register early: round:results fires when the last meme timer ends, while we're
   // still processing votes here.

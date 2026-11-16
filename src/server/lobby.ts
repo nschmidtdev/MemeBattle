@@ -18,6 +18,8 @@ export const MAX_PLAYERS = 30
 export const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 /** Ghosted players (disconnected) are kept this long so a brief reconnect or page navigation can resume them. */
 export const GHOST_TTL_MS = 30_000
+/** Template rerolls per player and round (caption phase). */
+export const MAX_REROLLS = 3
 
 const AVATARS = ['🐶', '🐱', '🦊', '🐸', '🐵', '🦄', '🐼', '🦁', '🐷', '🐙', '🦖', '🐔', '🐺', '🦉', '🐯', '🐢', '🦜', '🐭', '🦈', '🐉']
 const COLORS = ['#f44336', '#e91e63', '#9c27b0', '#673ab7', '#3f51b5', '#2196f3', '#03a9f4', '#00bcd4', '#009688', '#4caf50', '#8bc34a', '#ff9800', '#ff5722', '#795548', '#607d8b', '#ffeb3b', '#00e5ff', '#ff4081', '#76ff03', '#ffd740']
@@ -33,6 +35,10 @@ export interface PlayerState {
   isHost: boolean
   submission: CaptionSubmission | null
   votes: Record<number, VoteValue>
+  /** Template currently dealt to this player (caption phase); set per round, replaced by rerolls. */
+  template: TemplateData | null
+  /** Rerolls used this round. */
+  rerolls: number
   totalScore: number
   roundScores: number[]
 }
@@ -195,6 +201,8 @@ export class Lobby {
       isHost: this.players.size === 0,
       submission: null,
       votes: {},
+      template: null,
+      rerolls: 0,
       totalScore: 0,
       roundScores: [],
     }
@@ -326,6 +334,8 @@ export class Lobby {
     this.players.forEach((pl) => {
       pl.submission = null
       pl.votes = {}
+      pl.template = null
+      pl.rerolls = 0
     })
     this.setPhase('caption')
     this.captionEndsAt = Date.now() + this.settings.captionTime * 1000
@@ -336,11 +346,37 @@ export class Lobby {
     })
     this.players.forEach((pl) => {
       const template = this.dealTemplate(pl)
+      pl.template = template
       if (pl.socketId) {
-        this.hooks.sendTo(pl.socketId, Events.CaptionTemplate, { template, timeLeft: this.settings.captionTime })
+        this.hooks.sendTo(pl.socketId, Events.CaptionTemplate, {
+          template,
+          rerollsLeft: MAX_REROLLS,
+          timeLeft: this.settings.captionTime,
+        })
       }
     })
     this.schedule(() => this.beginVoting(), this.settings.captionTime * 1000)
+  }
+
+  /** Trade the current template for a different random one (limited per round). */
+  reroll(socketId: string): string | null {
+    const p = this.playerBySocket(socketId)
+    if (!p) return 'Unknown player.'
+    if (this.phase !== 'caption') return 'Not in the caption phase.'
+    if (p.submission) return 'You already submitted.'
+    if (p.rerolls >= MAX_REROLLS) return 'No rerolls left this round.'
+    const others = this.templates.filter((t) => t.id !== p.template?.id)
+    if (others.length === 0) return 'No other template available.'
+    p.template = clone(others[Math.floor(Math.random() * others.length)])
+    p.rerolls++
+    if (p.socketId) {
+      this.hooks.sendTo(p.socketId, Events.CaptionTemplate, {
+        template: p.template,
+        rerollsLeft: MAX_REROLLS - p.rerolls,
+        timeLeft: Math.max(0, Math.ceil((this.captionEndsAt - Date.now()) / 1000)),
+      })
+    }
+    return null
   }
 
   /** Deal a template: i-th player gets templates[i % len] (shuffled each round). */
@@ -358,7 +394,7 @@ export class Lobby {
       username: pl.username,
       avatar: pl.avatar,
       color: pl.color,
-      template: this.dealTemplate(pl),
+      template: pl.template ?? this.dealTemplate(pl),
       submission: clone(pl.submission!),
     }))
 
@@ -577,9 +613,10 @@ export class Lobby {
     send(Events.LobbyUpdate, this.fullLobbyUpdate())
     if (this.phase === 'caption') {
       const pl = this.players.get(playerId)
-      const template = pl ? this.dealTemplate(pl) : null
+      const template = pl?.template ?? null
       send(Events.CaptionTemplate, {
         template,
+        rerollsLeft: Math.max(0, MAX_REROLLS - (pl?.rerolls ?? 0)),
         timeLeft: Math.max(0, Math.ceil((this.captionEndsAt - Date.now()) / 1000)),
       })
     } else if (this.phase === 'voting') {
