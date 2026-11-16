@@ -500,6 +500,9 @@ export class Lobby {
           rotation: clampNum(b.rotation, -90, 90),
         }))
     }
+    const hasAny =
+      Object.values(texts).some((t) => t.trim() !== '') || lines.some((l) => l.text.trim() !== '')
+    if (!hasAny) return 'Add at least one text before submitting.'
     p.submission = { texts, lines }
     // Everyone in -> move on early (brief grace so clients see "submitted").
     if ([...this.players.values()].every((pl) => pl.submission)) {

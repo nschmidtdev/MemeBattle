@@ -123,11 +123,19 @@ async function main() {
   const dupErr = waitEvent(A, 'client:error', 5000).catch(() => null)
   A.emit('caption:submit', { texts: { y: 'second' }, lines: [] })
   ok('duplicate caption rejected', (await dupErr)?.message?.includes('already') === true, await dupErr)
-  B.emit('caption:submit', { texts: { x: 'bob says hi' }, lines: [] })
+  B.emit('caption:submit', {
+    texts: {},
+    lines: [{
+      id: 'l1', text: 'bob says hi', x: 0.5, y: 0.9, w: 0.8, fontSize: 0.07,
+      color: '#ffffff', stroke: '#000000', font: 'Impact', align: 'center', rotation: 0,
+    }],
+  })
 
   // voting
   const [pvA] = await Promise.all([waitEvent(A, 'phase:voting'), waitEvent(B, 'phase:voting')])
   ok('voting phase: 2 memes', pvA.memes?.length === 2 && pvA.current === 0, { memes: pvA.memes?.length, current: pvA.current })
+  const bMeme = pvA.memes?.find((m: any) => m.playerId === jB.playerId)
+  ok('freeform lines carried into voting', bMeme?.submission?.lines?.length === 1, bMeme?.submission)
 
   // Register early: round:results fires when the last meme timer ends, while we're
   // still processing votes here.

@@ -14,16 +14,22 @@ interface Props {
   onVote: (index: number, value: VoteValue) => void
 }
 
+const VOTE_BTNS: Array<{ value: VoteValue; label: string; emoji: string; active: string }> = [
+  { value: 'up', label: 'Fun', emoji: '👍', active: 'border-mint bg-mint/20 text-mint ring-2 ring-mint/60' },
+  { value: 'meh', label: 'Meh', emoji: '🤷', active: 'border-sky bg-sky/20 text-sky ring-2 ring-sky/60' },
+  { value: 'down', label: 'Cringe', emoji: '👎', active: 'border-rose bg-rose/20 text-rose ring-2 ring-rose/60' },
+]
+
 export default function VotingView({ round, memes, current, counts, myId, onVote }: Props) {
   const [myVotes, setMyVotes] = useState<Record<number, VoteValue>>({})
 
   const meme = memes[current]
   if (!meme) {
     return (
-      <div className="panel">
-        <h2>Voting — Round {round}</h2>
-        <p className="muted">Loading memes…</p>
-      </div>
+      <section className="rounded-2xl border border-line bg-card p-8 text-center shadow-xl">
+        <h2 className="font-display text-2xl uppercase tracking-wide">Voting — Round {round}</h2>
+        <p className="mt-2 animate-pulse text-dim">Loading memes…</p>
+      </section>
     )
   }
 
@@ -37,71 +43,72 @@ export default function VotingView({ round, memes, current, counts, myId, onVote
   }
 
   return (
-    <div className="panel">
-      <h2 className="row spread">
-        <span>Voting — Round {round}</span>
-        <span className="badge">meme {current + 1} of {memes.length}</span>
-      </h2>
-
-      <div className="row" style={{ gap: 20, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-        <div style={{ flex: '1 1 320px', minWidth: 300 }}>
-          <div className="meme-canvas-wrap">
-            <MemeView template={meme.template} submission={meme.submission} maxDim={440} />
-          </div>
-          <p style={{ textAlign: 'center', marginTop: 8 }}>
+    <section className="mx-auto max-w-2xl">
+      <header className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <h2 className="font-display text-2xl uppercase tracking-wide">
+          Vote — <span className="text-sun">Round {round}</span>
+        </h2>
+        {/* progress dots */}
+        <div className="flex items-center gap-1.5">
+          {memes.map((m, i) => (
             <span
-              className="avatar"
-              style={{ background: meme.color, display: 'inline-flex', marginRight: 6 }}
-            >
-              {meme.username[0]?.toUpperCase()}
-            </span>
-            <strong>{meme.username}</strong>
-            {isOwn && <span className="badge" style={{ marginLeft: 8 }}>your meme</span>}
-          </p>
+              key={m.playerId}
+              title={`${i + 1}. ${m.username}`}
+              className={`h-2.5 rounded-full transition-all ${
+                i === current ? 'w-7 bg-punch' : i < current ? 'w-2.5 bg-mint/70' : 'w-2.5 bg-line'
+              }`}
+            />
+          ))}
+        </div>
+      </header>
+
+      <div className="rounded-2xl border border-line bg-card p-3 shadow-xl sm:p-4">
+        <div className="meme-canvas-wrap">
+          <MemeView template={meme.template} submission={meme.submission} maxDim={560} />
         </div>
 
-        <div style={{ flex: '0 1 300px', minWidth: 260 }}>
-          {!isOwn ? (
-            <div className="vote-btns">
-              <button
-                className={myVote === 'up' ? 'active-up' : ''}
-                onClick={() => vote('up')}
-              >
-                👍 Fun
-              </button>
-              <button
-                className={myVote === 'meh' ? 'active-meh' : ''}
-                onClick={() => vote('meh')}
-              >
-                🤷 Meh
-              </button>
-              <button
-                className={myVote === 'down' ? 'active-down' : ''}
-                onClick={() => vote('down')}
-              >
-                👎 Cringe
-              </button>
-            </div>
-          ) : (
-            <p className="muted">You can't vote on your own meme.</p>
-          )}
-
-          <div className="vote-counts">
-            <span className="score-pos">👍 {tally.up}</span>
-            <span>🤷 {tally.meh}</span>
-            <span className="score-neg">👎 {tally.down}</span>
-          </div>
-        </div>
-      </div>
-
-      <h3 style={{ marginTop: 18 }}>This round</h3>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-        {memes.map((m, i) => (
-          <span key={m.playerId} className={`badge${i === current ? ' live' : ''}`}>
-            {i + 1}. {m.username}
+        <div className="mt-3 flex items-center justify-center gap-2">
+          <span
+            className="flex h-8 w-8 items-center justify-center rounded-full text-sm font-extrabold text-night"
+            style={{ background: meme.color }}
+          >
+            {meme.username[0]?.toUpperCase()}
           </span>
-        ))}
+          <strong>{meme.username}</strong>
+          {isOwn && (
+            <span className="rounded-full border border-sun/60 bg-sun/10 px-2 py-0.5 text-xs font-semibold text-sun">
+              your meme
+            </span>
+          )}
+        </div>
+
+        {isOwn ? (
+          <p className="mt-4 text-center text-sm text-dim">
+            😎 That&apos;s your masterpiece — you can&apos;t vote on it.
+          </p>
+        ) : (
+          <div className="mt-4 grid grid-cols-3 gap-2 sm:gap-3">
+            {VOTE_BTNS.map(({ value, label, emoji, active }) => (
+              <button
+                key={value}
+                className={`flex flex-col items-center gap-1 rounded-2xl border border-line bg-night2 py-3 transition hover:border-dim hover:bg-card2 active:translate-y-px ${
+                  myVote === value ? active : ''
+                }`}
+                onClick={() => vote(value)}
+              >
+                <span className="text-3xl leading-none">{emoji}</span>
+                <span className="text-sm font-bold">{label}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div className="mt-4 flex items-center justify-center gap-5 border-t border-line pt-3 text-sm">
+          <span className="text-mint">👍 {tally.up}</span>
+          <span className="text-sky">🤷 {tally.meh}</span>
+          <span className="text-rose">👎 {tally.down}</span>
+        </div>
       </div>
-    </div>
+    </section>
   )
 }

@@ -10,9 +10,9 @@ meme-maker wins. No accounts, no filters, no mercy.
 - **Private & public lobbys** — share a 5-letter code with your group, or join a
   public lobby. Up to 30 players per lobby.
 - **Guest play** — just pick a name and play, no sign-up.
-- **Custom memes** — admins can create packs and upload template images, and every
-  template supports editable text boxes *and* free-form text (fully freeform
-  "any image + caption" style).
+- **Custom memes** — admins can create packs and upload template images. Players
+  edit every meme in a WYSIWYG editor: pre-placed text boxes are just starting
+  positions — move, restyle, delete and add as many texts as you like.
 - **Content-only admin panel** — manage packs and templates via `/admin`. No user
   management, no reporting, no moderation.
 - **Böse memes allowed** — there is intentionally no profanity filter and no
@@ -113,7 +113,7 @@ scripts/e2e.ts          End-to-end smoke test (socket.io-client, no browser need
 
 ## Tech stack
 
-Next.js 15 (App Router, TypeScript) · Socket.IO · Prisma + PostgreSQL ·
+Next.js 15 (App Router, TypeScript) · Tailwind CSS · Socket.IO · Prisma + PostgreSQL ·
 Canvas-based client-side meme rendering · Docker Compose for self-hosting.
 
 ## License

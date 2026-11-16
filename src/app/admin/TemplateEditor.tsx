@@ -128,7 +128,10 @@ export default function TemplateEditor({ template, onClose, onSaved }: Props) {
             {uploading && <p className="muted">Uploading…</p>}
             <label className="checkbox-row">
               <input type="checkbox" checked={isFreeform} onChange={(e) => setIsFreeform(e.target.checked)} />
-              <span>Freeform (no fixed boxes — players place their own lines)</span>
+              <span>
+                Freeform (players start with an empty meme){' '}
+                {!isFreeform && <em>— note: boxes below are only starting positions now; players can move, restyle, delete and add texts freely</em>}
+              </span>
             </label>
             <label className="checkbox-row">
               <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />

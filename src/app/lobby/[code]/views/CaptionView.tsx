@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react'
 import type { CaptionSubmission, FreeformLine, TemplateData } from '@/lib/types'
-import MemeView from '@/components/MemeView'
 import FreeformEditor from './FreeformEditor'
 
 interface Props {
@@ -12,82 +11,88 @@ interface Props {
   onSubmit: (submission: CaptionSubmission) => void
 }
 
+/**
+ * Caption phase. Every template is edited with the freeform editor:
+ * if the template ships pre-placed boxes they become editable starting
+ * lines — the player can move, restyle, delete them and add more.
+ */
 export default function CaptionView({ template, round, totalRounds, onSubmit }: Props) {
-  const [texts, setTexts] = useState<Record<string, string>>({})
   const [lines, setLines] = useState<FreeformLine[]>([])
   const [submitted, setSubmitted] = useState(false)
 
   // reset when a new template arrives for the round
   useEffect(() => {
-    setTexts({})
-    setLines([])
     setSubmitted(false)
+    if (!template) {
+      setLines([])
+      return
+    }
+    setLines(
+      template.boxes.map((b) => ({
+        id: b.id,
+        text: '',
+        x: b.x,
+        y: b.y,
+        w: b.w,
+        fontSize: b.fontSize,
+        color: b.color,
+        stroke: b.stroke,
+        font: b.font,
+        align: b.align,
+        rotation: b.rotation,
+      })),
+    )
   }, [template])
 
   if (!template) {
     return (
-      <div className="panel">
-        <h2>Caption Round {round} / {totalRounds}</h2>
-        <p className="muted">Waiting for your template…</p>
-      </div>
+      <section className="rounded-2xl border border-line bg-card p-8 text-center shadow-xl">
+        <h2 className="font-display text-2xl uppercase tracking-wide">
+          Round {round} / {totalRounds}
+        </h2>
+        <p className="mt-2 animate-pulse text-dim">Waiting for your template…</p>
+      </section>
     )
   }
 
-  const isFreeform = template.boxes.length === 0
-
-  const submission: CaptionSubmission = isFreeform
-    ? { texts: {}, lines }
-    : { texts, lines: [] }
+  const hasText = lines.some((l) => l.text.trim() !== '')
 
   const submit = () => {
     if (submitted) return
-    onSubmit(submission)
+    onSubmit({ texts: {}, lines })
     setSubmitted(true)
   }
 
   return (
-    <div className="panel">
-      <h2 className="row spread">
-        <span>Caption Round {round} / {totalRounds}</span>
-        <span className="badge">{isFreeform ? 'freeform' : template.name}</span>
-      </h2>
+    <section className="mx-auto max-w-2xl">
+      <header className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="font-display text-2xl uppercase tracking-wide">
+          Round <span className="text-sun">{round}</span> / {totalRounds}
+        </h2>
+        <span className="rounded-full border border-line bg-night2 px-3 py-1 text-xs text-dim">
+          {template.name}
+        </span>
+      </header>
 
-      <div className="row" style={{ gap: 20, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-        <div style={{ flex: '1 1 320px', minWidth: 300 }}>
-          {isFreeform ? (
-            <FreeformEditor template={template} lines={lines} setLines={setLines} />
-          ) : (
-            <div style={{ display: 'grid', gap: 12 }}>
-              {template.boxes.map((box, i) => (
-                <div key={box.id} className="caption-box">
-                  <span className="label">{box.defaultText ?? `Box ${i + 1}`}</span>
-                  <input
-                    value={texts[box.id] ?? ''}
-                    maxLength={80}
-                    placeholder="Type here…"
-                    disabled={submitted}
-                    onChange={(e) => setTexts((prev) => ({ ...prev, [box.id]: e.target.value }))}
-                    onKeyDown={(e) => e.key === 'Enter' && submit()}
-                  />
-                </div>
-              ))}
+      <div className="rounded-2xl border border-line bg-card p-3 shadow-xl sm:p-4">
+        <FreeformEditor template={template} lines={lines} setLines={setLines} disabled={submitted} />
+
+        <div className="mt-4 border-t border-line pt-4">
+          {submitted ? (
+            <div className="rounded-xl border border-mint/50 bg-mint/10 px-4 py-3 text-center font-semibold text-mint">
+              ✅ Submitted — waiting for the others…
             </div>
-          )}
-
-          <div className="row" style={{ marginTop: 14 }}>
-            <button className="primary" disabled={submitted || (isFreeform && lines.length === 0)} onClick={submit}>
-              {submitted ? 'Submitted ✓ — waiting for everyone…' : 'Submit meme'}
+          ) : (
+            <button
+              className="w-full rounded-xl bg-gradient-to-r from-punch to-punch2 py-3 text-lg font-extrabold uppercase tracking-wide text-night shadow-lg transition hover:brightness-110 active:translate-y-px disabled:cursor-default disabled:opacity-40"
+              disabled={!hasText}
+              onClick={submit}
+            >
+              {hasText ? 'Send meme 🚀' : 'Write at least one text…'}
             </button>
-          </div>
-        </div>
-
-        <div style={{ flex: '0 1 360px', minWidth: 280 }}>
-          <p className="muted" style={{ textAlign: 'center' }}>Live preview</p>
-          <div className="meme-canvas-wrap">
-            <MemeView template={template} submission={submission} maxDim={360} />
-          </div>
+          )}
         </div>
       </div>
-    </div>
+    </section>
   )
 }

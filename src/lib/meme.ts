@@ -6,11 +6,14 @@ import type { CaptionSubmission, FreeformLine, RenderTextItem, TemplateBox, Temp
 
 /** Merge template boxes with the player's text into renderable text items. */
 export function buildTextItems(template: TemplateData, submission: CaptionSubmission): RenderTextItem[] {
-  if (template.isFreeform) {
-    return (submission.lines ?? [])
-      .filter((l) => l && l.text && l.text.trim() !== '')
-      .map((l) => toRenderItem(l, l.text))
+  // Freeform submissions (every caption is edited with the freeform editor now):
+  // the placed lines carry all placement info themselves.
+  const lines = (submission.lines ?? []).filter((l) => l && typeof l.text === 'string' && l.text.trim() !== '')
+  if (lines.length > 0) {
+    return lines.map((l) => toRenderItem(l, l.text))
   }
+  if (template.isFreeform) return []
+  // Legacy fixed-slot submissions (boxId -> text)
   return template.boxes
     .map((box) => {
       const text = submission.texts[box.id] ?? box.defaultText ?? ''

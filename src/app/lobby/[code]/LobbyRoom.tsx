@@ -226,112 +226,175 @@ export default function LobbyRoom({ code }: { code: string }) {
   // ---------------------------------------------------------------- render
   const showJoinForm = !state && nameInput !== null
 
-  const playerList = state && state.phase !== 'caption' && state.phase !== 'voting' ? (
-    <aside className="panel">
-      <h3>Players ({state.players.length}/{state.maxPlayers})</h3>
+  const inGame = (state?.phase ?? '') === 'caption' || (state?.phase ?? '') === 'voting'
+  const playerStrip = inGame && state ? (
+    <div className="flex flex-wrap items-center gap-1.5">
       {state.players.map((p) => (
-        <div key={p.id} className={`player-card${p.connected ? '' : ' disconnected'}`}>
-          <span className="avatar" style={{ background: p.color }}>{p.username[0]?.toUpperCase()}</span>
-          <span className="uname">{p.username}{p.id === myId ? ' (you)' : ''}</span>
-          {p.isHost && <span className="host-badge">HOST</span>}
-          {isHost && p.id !== myId && state.phase === 'lobby' && (
-            <button className="kick-btn" title="Kick" onClick={() => kick(p.id)}>✕</button>
-          )}
-        </div>
+        <span
+          key={p.id}
+          title={p.username + (p.connected ? '' : ' (disconnected)') + (p.isHost ? ' 👑' : '')}
+          className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-extrabold text-night ${p.connected ? '' : 'opacity-40'}`}
+          style={{ background: p.color }}
+        >
+          {p.username[0]?.toUpperCase()}
+        </span>
       ))}
-    </aside>
+    </div>
   ) : null
 
   return (
-    <div className="container">
-      <div className="row spread" style={{ marginBottom: 12 }}>
-        <div>
-          <h1 style={{ fontSize: 22, margin: 0 }}>{state?.name ?? 'Meme Battle'}</h1>
-          <span className="badge">
-            {state ? state.code : code.toUpperCase()}
-            <button
-              className="ghost"
-              style={{ padding: '0 4px', fontSize: 12 }}
-              onClick={() => navigator.clipboard?.writeText((state?.code ?? code).toUpperCase())}
-              title="Copy code"
-            >⧉</button>
+    <div className="mx-auto max-w-4xl px-3 pb-16 sm:px-4">
+      {/* ------------------------------------------------------------ top bar */}
+      <header className="sticky top-0 z-40 -mx-3 mb-4 border-b border-line/60 bg-night/85 px-3 py-2.5 backdrop-blur-md sm:-mx-4 sm:px-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="mr-auto min-w-0 truncate font-display text-lg uppercase tracking-wide sm:text-xl">
+            {state?.name ?? 'Meme Battle'}
+          </h1>
+          <button
+            className="rounded-lg border border-line bg-night2 px-2.5 py-1 font-mono text-sm font-bold tracking-[0.2em] text-sun transition hover:border-sun"
+            title="Copy lobby code"
+            onClick={() => navigator.clipboard?.writeText((state?.code ?? code).toUpperCase())}
+          >
+            {state ? state.code : code.toUpperCase()} ⧉
+          </button>
+          <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${state?.isPublic ? 'border-mint/60 text-mint' : 'border-line text-dim'}`}>
+            {state?.isPublic ? '🌍 public' : '🔒 private'}
           </span>
-          {state?.isPublic ? <span className="badge">public</span> : <span className="badge">private</span>}
+          <button
+            className="rounded-lg border border-line bg-night2 px-2.5 py-1.5 text-sm transition hover:border-dim"
+            title={muted ? 'Unmute' : 'Mute'}
+            onClick={toggleMute}
+          >
+            {muted ? '🔇' : '🔊'}
+          </button>
+          {state && (
+            <button
+              className="rounded-lg border border-rose/60 bg-night2 px-2.5 py-1.5 text-sm text-rose transition hover:bg-rose/10"
+              onClick={leave}
+            >
+              Leave
+            </button>
+          )}
         </div>
-        <div className="row">
-          <button className="ghost" onClick={toggleMute}>{muted ? '🔇' : '🔊'}</button>
-          {state && <button className="danger" onClick={leave}>Leave</button>}
+
+        {timerPct !== null && timeLeftSec !== null && (
+          <div className="mt-2 flex items-center gap-2">
+            <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-night2">
+              <div
+                className={`h-full rounded-full transition-[width] duration-200 ${timerPct > 50 ? 'bg-mint' : timerPct > 25 ? 'bg-sun' : 'bg-rose'}`}
+                style={{ width: `${timerPct}%` }}
+              />
+            </div>
+            <span className={`w-9 text-right text-sm font-extrabold tabular-nums ${timerPct > 25 ? 'text-dim' : 'text-rose'}`}>
+              {Math.ceil(timeLeftSec)}
+            </span>
+          </div>
+        )}
+
+        {playerStrip && <div className="mt-2">{playerStrip}</div>}
+      </header>
+
+      {!online && (
+        <div className="mb-4 rounded-xl border border-sky/50 bg-sky/10 px-4 py-2.5 text-sm text-sky">
+          Reconnecting…
         </div>
-      </div>
-
-      {!online && <div className="error-banner">Connecting…</div>}
-      {error && <div className="error-banner">{error}</div>}
-
-      {timerPct !== null && timeLeftSec !== null && (
-        <div className="timer-bar" style={{ marginBottom: 14 }}>
-          <div style={{ width: `${timerPct}%` }} />
+      )}
+      {error && (
+        <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-rose/50 bg-rose/10 px-4 py-2.5 text-sm text-rose">
+          <span>{error}</span>
+          <button className="font-bold" onClick={() => setError(null)}>✕</button>
         </div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 260px', gap: 16, alignItems: 'start' }}>
-        <main>
-          {showJoinForm ? (
-            <div className="panel" style={{ maxWidth: 340, margin: '60px auto' }}>
-              <h2>Join {code.toUpperCase()}</h2>
-              <input
-                autoFocus
-                value={nameInput ?? ''}
-                maxLength={16}
-                placeholder="Your name"
-                onChange={(e) => setNameInput(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && joinAs(nameInput ?? '')}
-              />
-              <div className="row" style={{ marginTop: 10 }}>
-                <button className="primary" onClick={() => joinAs(nameInput ?? '')}>Join</button>
-                <button className="ghost" onClick={() => router.replace('/')}>Cancel</button>
+      {showJoinForm ? (
+        <section className="mx-auto mt-16 max-w-sm rounded-2xl border border-line bg-card p-6 shadow-xl">
+          <h2 className="mb-1 font-display text-2xl uppercase tracking-wide">
+            Join <span className="text-sun">{code.toUpperCase()}</span>
+          </h2>
+          <p className="mb-4 text-sm text-dim">Pick a name and hop in.</p>
+          <input
+            autoFocus
+            className="w-full rounded-xl border border-line bg-night px-4 py-3 text-lg font-semibold"
+            value={nameInput ?? ''}
+            maxLength={16}
+            placeholder="Your name"
+            onChange={(e) => setNameInput(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && joinAs(nameInput ?? '')}
+          />
+          <div className="mt-4 flex gap-2">
+            <button
+              className="flex-1 rounded-xl bg-gradient-to-r from-punch to-punch2 py-3 font-extrabold uppercase tracking-wide text-night shadow-lg transition hover:brightness-110"
+              onClick={() => joinAs(nameInput ?? '')}
+            >
+              Join
+            </button>
+            <button
+              className="rounded-xl border border-line px-4 py-3 text-dim transition hover:border-dim hover:text-ink"
+              onClick={() => router.replace('/')}
+            >
+              Cancel
+            </button>
+          </div>
+        </section>
+      ) : !state ? (
+        <section className="mx-auto mt-16 max-w-sm rounded-2xl border border-line bg-card p-6 text-center shadow-xl">
+          {getSavedUsername() === null && nameInput === null ? (
+            <>
+              <h2 className="mb-1 font-display text-2xl uppercase tracking-wide">
+                Join <span className="text-sun">{code.toUpperCase()}</span>
+              </h2>
+              <p className="mb-4 text-sm text-dim">Enter a name to join this lobby.</p>
+              <button
+                className="rounded-xl bg-gradient-to-r from-punch to-punch2 px-6 py-3 font-extrabold uppercase tracking-wide text-night shadow-lg transition hover:brightness-110"
+                onClick={() => setNameInput('')}
+              >
+                Enter name
+              </button>
+            </>
+          ) : joinError ? (
+            <>
+              <h2 className="mb-2 font-display text-2xl uppercase tracking-wide">
+                Join <span className="text-sun">{code.toUpperCase()}</span>
+              </h2>
+              <p className="mb-2 text-sm text-rose">{joinError}</p>
+              <p className="text-xs text-dim">
+                Lobbies live in server memory — this lobby may have ended or the server may have
+                been restarted.
+              </p>
+              <div className="mt-4 flex justify-center gap-2">
+                <button
+                  className="rounded-xl bg-gradient-to-r from-punch to-punch2 px-5 py-2.5 font-bold text-night shadow-lg transition hover:brightness-110"
+                  onClick={() => router.replace('/')}
+                >
+                  Back to home
+                </button>
+                <button
+                  className="rounded-xl border border-line px-5 py-2.5 text-dim transition hover:border-dim hover:text-ink"
+                  onClick={() => tryRejoin()}
+                >
+                  Try again
+                </button>
               </div>
-            </div>
-          ) : !state ? (
-            <div className="panel" style={{ maxWidth: 340, margin: '60px auto', textAlign: 'center' }}>
-              {getSavedUsername() === null && nameInput === null ? (
-                <>
-                  <h2>Join {code.toUpperCase()}</h2>
-                  <p className="muted">Enter a name to join this lobby.</p>
-                  <button className="primary" onClick={() => setNameInput('')}>Enter name</button>
-                </>
-              ) : joinError ? (
-                <>
-                  <h2>Join {code.toUpperCase()}</h2>
-                  <p className="muted">{joinError}</p>
-                  <p className="muted" style={{ fontSize: 12 }}>
-                    Lobbies live in server memory — this lobby may have ended or the server may have
-                    been restarted.
-                  </p>
-                  <div className="row" style={{ justifyContent: 'center', marginTop: 12 }}>
-                    <button className="primary" onClick={() => router.replace('/')}>Back to home</button>
-                    <button className="ghost" onClick={() => tryRejoin()}>Try again</button>
-                  </div>
-                </>
-              ) : (
-                <p className="muted">Connecting to lobby…</p>
-              )}
-            </div>
-          ) : state.phase === 'lobby' ? (
-            <LobbyView state={state} myId={myId} onSettings={sendSettings} onStart={startGame} />
-          ) : state.phase === 'caption' && caption ? (
-            <CaptionView key={caption.round} template={caption.template} round={caption.round} totalRounds={caption.totalRounds} onSubmit={submitCaption} />
-          ) : state.phase === 'voting' && voting ? (
-            <VotingView key={voting.round} round={voting.round} memes={voting.memes} current={voting.current} counts={counts} myId={myId} onVote={castVote} />
-          ) : state.phase === 'roundResults' && roundResult ? (
-            <ResultsView mode="round" result={roundResult} />
-          ) : state.phase === 'gameOver' && gameOver ? (
-            <ResultsView mode="over" result={gameOver.ranking} totalRounds={gameOver.totalRounds} myId={myId} isHost={isHost} onPlayAgain={playAgain} />
+            </>
           ) : (
-            <div className="panel"><p className="muted">Waiting…</p></div>
+            <p className="animate-pulse text-dim">Connecting to lobby…</p>
           )}
-        </main>
-        {playerList}
-      </div>
+        </section>
+      ) : state.phase === 'lobby' ? (
+        <LobbyView state={state} myId={myId} onSettings={sendSettings} onStart={startGame} onKick={kick} />
+      ) : state.phase === 'caption' && caption ? (
+        <CaptionView key={caption.round} template={caption.template} round={caption.round} totalRounds={caption.totalRounds} onSubmit={submitCaption} />
+      ) : state.phase === 'voting' && voting ? (
+        <VotingView key={voting.round} round={voting.round} memes={voting.memes} current={voting.current} counts={counts} myId={myId} onVote={castVote} />
+      ) : state.phase === 'roundResults' && roundResult ? (
+        <ResultsView mode="round" result={roundResult} />
+      ) : state.phase === 'gameOver' && gameOver ? (
+        <ResultsView mode="over" result={gameOver.ranking} totalRounds={gameOver.totalRounds} myId={myId} isHost={isHost} onPlayAgain={playAgain} />
+      ) : (
+        <section className="rounded-2xl border border-line bg-card p-8 text-center text-dim shadow-xl">
+          <p className="animate-pulse">Waiting…</p>
+        </section>
+      )}
     </div>
   )
 }
