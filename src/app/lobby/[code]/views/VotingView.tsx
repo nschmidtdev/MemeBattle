@@ -2,14 +2,13 @@
 
 import { useState } from 'react'
 import type { MemeInfo } from '@/lib/client'
-import type { VoteTally, VoteValue } from '@/lib/types'
+import type { VoteValue } from '@/lib/types'
 import MemeView from '@/components/MemeView'
 
 interface Props {
   round: number
   memes: MemeInfo[]
   current: number
-  counts: Record<number, VoteTally>
   myId: string | null
   onVote: (index: number, value: VoteValue) => void
 }
@@ -20,7 +19,7 @@ const VOTE_BTNS: Array<{ value: VoteValue; label: string; emoji: string; active:
   { value: 'down', label: 'Cringe', emoji: '👎', active: 'border-rose bg-rose/20 text-rose ring-2 ring-rose/60' },
 ]
 
-export default function VotingView({ round, memes, current, counts, myId, onVote }: Props) {
+export default function VotingView({ round, memes, current, myId, onVote }: Props) {
   const [myVotes, setMyVotes] = useState<Record<number, VoteValue>>({})
 
   const meme = memes[current]
@@ -34,7 +33,6 @@ export default function VotingView({ round, memes, current, counts, myId, onVote
   }
 
   const isOwn = meme.playerId === myId
-  const tally: VoteTally = counts[current] ?? { up: 0, down: 0, meh: 0 }
   const myVote = myVotes[current]
 
   const vote = (value: VoteValue) => {
@@ -43,7 +41,7 @@ export default function VotingView({ round, memes, current, counts, myId, onVote
   }
 
   return (
-    <section className="mx-auto max-w-2xl">
+    <section className="mx-auto max-w-3xl">
       <header className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <h2 className="font-display text-2xl uppercase tracking-wide">
           Vote — <span className="text-sun">Round {round}</span>
@@ -63,8 +61,8 @@ export default function VotingView({ round, memes, current, counts, myId, onVote
       </header>
 
       <div className="rounded-2xl border border-line bg-card p-3 shadow-xl sm:p-4">
-        <div className="meme-canvas-wrap">
-          <MemeView template={meme.template} submission={meme.submission} maxDim={560} />
+        <div className="meme-canvas-wrap border-none bg-transparent">
+          <MemeView template={meme.template} submission={meme.submission} maxDim={720} className="max-h-[80vh] w-auto max-w-full" />
         </div>
 
         <div className="mt-3 flex items-center justify-center gap-2">
@@ -103,11 +101,9 @@ export default function VotingView({ round, memes, current, counts, myId, onVote
           </div>
         )}
 
-        <div className="mt-4 flex items-center justify-center gap-5 border-t border-line pt-3 text-sm">
-          <span className="text-mint">👍 {tally.up}</span>
-          <span className="text-sky">🤷 {tally.meh}</span>
-          <span className="text-rose">👎 {tally.down}</span>
-        </div>
+        <p className="mt-4 border-t border-line pt-3 text-center text-sm text-dim">
+          🤫 Votes stay secret until the results
+        </p>
       </div>
     </section>
   )

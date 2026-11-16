@@ -188,6 +188,7 @@ async function main() {
 
   const over = await waitEvent(A, 'game:over', 15000)
   ok('game:over with ranking', over.ranking?.length === 2 && over.totalRounds === 1, { ranking: over.ranking?.length })
+  ok('game:over carries meme gallery', over.memes?.length === 2 && over.memes?.every((m: any) => m.template?.imageKey && m.submission), { memes: over.memes?.length })
   const top = over.ranking?.[0]
   const bottom = over.ranking?.[1]
   ok('ranking ordered by total', top.total >= bottom.total, over.ranking)

@@ -89,6 +89,12 @@ export interface MemeEntry {
   submission: CaptionSubmission
 }
 
+/** A scored meme of a finished round — collected for the final gallery. */
+export interface FinalMeme extends MemeEntry {
+  score: number
+  round: number
+}
+
 export interface VoteTally {
   up: number
   down: number
@@ -153,7 +159,6 @@ export const Events = {
   PhaseCaption: 'phase:caption',
   PhaseVoting: 'phase:voting',
   VotingProgress: 'voting:progress',
-  VotingCounts: 'voting:counts',
   RoundResults: 'round:results',
   GameOver: 'game:over',
   Error: 'client:error',

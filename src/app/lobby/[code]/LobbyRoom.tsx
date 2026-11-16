@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import type { CaptionSubmission, RoundResult, TemplateData, VoteTally, VoteValue } from '@/lib/types'
+import type { CaptionSubmission, FinalMeme, RoundResult, TemplateData, VoteValue } from '@/lib/types'
 import { Events } from '@/lib/types'
 import {
   clearIdentity,
@@ -23,6 +23,7 @@ import ResultsView from './views/ResultsView'
 interface GameStateOver {
   ranking: Array<{ playerId: string; username: string; avatar: string; color: string; total: number; rounds: number[] }>
   totalRounds: number
+  memes: FinalMeme[]
 }
 
 export default function LobbyRoom({ code }: { code: string }) {
@@ -44,7 +45,6 @@ export default function LobbyRoom({ code }: { code: string }) {
 
   const [caption, setCaption] = useState<{ template: TemplateData | null; round: number; totalRounds: number } | null>(null)
   const [voting, setVoting] = useState<{ round: number; memes: MemeInfo[]; current: number } | null>(null)
-  const [counts, setCounts] = useState<Record<number, VoteTally>>({})
   const [roundResult, setRoundResult] = useState<RoundResult | null>(null)
   const [gameOver, setGameOver] = useState<GameStateOver | null>(null)
 
@@ -124,7 +124,6 @@ export default function LobbyRoom({ code }: { code: string }) {
       setCaption(null)
       setRoundResult(null)
       setGameOver(null)
-      setCounts({})
       startTimer(timeLeft)
       sounds.memeShown()
     })
@@ -133,16 +132,13 @@ export default function LobbyRoom({ code }: { code: string }) {
       startTimer(timeLeft)
       sounds.memeShown()
     })
-    socket.on(Events.VotingCounts, ({ index, up, down, meh }: { index: number; up: number; down: number; meh: number }) => {
-      setCounts((prev) => ({ ...prev, [index]: { up, down, meh } }))
-    })
     socket.on(Events.RoundResults, (r: RoundResult) => {
       setRoundResult(r)
       setGameOver(null)
       sounds.results()
     })
-    socket.on(Events.GameOver, ({ ranking, totalRounds }: GameStateOver) => {
-      setGameOver({ ranking, totalRounds })
+    socket.on(Events.GameOver, ({ ranking, totalRounds, memes }: GameStateOver) => {
+      setGameOver({ ranking, totalRounds, memes })
       setRoundResult(null)
       sounds.win()
     })
@@ -243,7 +239,7 @@ export default function LobbyRoom({ code }: { code: string }) {
   ) : null
 
   return (
-    <div className="mx-auto max-w-4xl px-3 pb-16 sm:px-4">
+    <div className={`mx-auto px-3 pb-16 sm:px-4 ${state?.phase === 'gameOver' ? 'max-w-6xl' : 'max-w-4xl'}`}>
       {/* ------------------------------------------------------------ top bar */}
       <header className="sticky top-0 z-40 -mx-3 mb-4 border-b border-line/60 bg-night/85 px-3 py-2.5 backdrop-blur-md sm:-mx-4 sm:px-4">
         <div className="flex flex-wrap items-center gap-2">
@@ -385,11 +381,11 @@ export default function LobbyRoom({ code }: { code: string }) {
       ) : state.phase === 'caption' && caption ? (
         <CaptionView key={caption.round} template={caption.template} round={caption.round} totalRounds={caption.totalRounds} onSubmit={submitCaption} />
       ) : state.phase === 'voting' && voting ? (
-        <VotingView key={voting.round} round={voting.round} memes={voting.memes} current={voting.current} counts={counts} myId={myId} onVote={castVote} />
+        <VotingView key={voting.round} round={voting.round} memes={voting.memes} current={voting.current} myId={myId} onVote={castVote} />
       ) : state.phase === 'roundResults' && roundResult ? (
         <ResultsView mode="round" result={roundResult} />
       ) : state.phase === 'gameOver' && gameOver ? (
-        <ResultsView mode="over" result={gameOver.ranking} totalRounds={gameOver.totalRounds} myId={myId} isHost={isHost} onPlayAgain={playAgain} />
+        <ResultsView mode="over" result={gameOver.ranking} memes={gameOver.memes} totalRounds={gameOver.totalRounds} myId={myId} isHost={isHost} onPlayAgain={playAgain} />
       ) : (
         <section className="rounded-2xl border border-line bg-card p-8 text-center text-dim shadow-xl">
           <p className="animate-pulse">Waiting…</p>

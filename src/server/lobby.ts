@@ -1,6 +1,7 @@
 import crypto from 'crypto'
 import type {
   CaptionSubmission,
+  FinalMeme,
   FreeformLine,
   LobbySettings,
   MemeEntry,
@@ -87,6 +88,8 @@ export class Lobby {
   memeSwitchAt = 0
   lastRoundResult: unknown = null
   ranking: unknown = null
+  /** All scored memes of the game, for the final gallery. */
+  finalMemes: FinalMeme[] = []
 
   constructor(code: string, name: string, isPublic: boolean, settings: LobbySettings, hooks: LobbyHooks) {
     this.code = code
@@ -303,6 +306,7 @@ export class Lobby {
 
     this.templates = shuffle(templates)
     this.totalRounds = this.settings.rounds
+    this.finalMemes = []
     this.players.forEach((pl) => {
       pl.totalScore = 0
       pl.roundScores = []
@@ -423,6 +427,23 @@ export class Lobby {
       pl.roundScores.push(score)
       ;(result.totals as Record<string, number>)[pl.id] = pl.totalScore
     }
+
+    // collect the round's memes (scored) for the final gallery; boxes are dropped
+    // because freeform lines carry all placement info
+    this.memes.forEach((m, i) => {
+      const t = this.tallies.get(i) ?? { up: 0, down: 0, meh: 0 }
+      this.finalMemes.push({
+        playerId: m.playerId,
+        username: m.username,
+        avatar: m.avatar,
+        color: m.color,
+        template: { ...m.template, boxes: [] },
+        submission: clone(m.submission),
+        score: computeScore(t),
+        round: this.round,
+      })
+    })
+
     this.lastRoundResult = result
     this.setPhase('roundResults')
     this.hooks.broadcast(Events.RoundResults, result)
@@ -447,7 +468,7 @@ export class Lobby {
       .sort((a, b) => b.total - a.total)
     this.ranking = ranking
     this.setPhase('gameOver')
-    this.hooks.broadcast(Events.GameOver, { ranking, totalRounds: this.totalRounds })
+    this.hooks.broadcast(Events.GameOver, { ranking, totalRounds: this.totalRounds, memes: this.finalMemes })
   }
 
   playAgain(socketId: string): string | null {
@@ -458,6 +479,7 @@ export class Lobby {
     this.round = 0
     this.memes = []
     this.tallies = new Map()
+    this.finalMemes = []
     this.players.forEach((pl) => {
       pl.submission = null
       pl.votes = {}
@@ -529,14 +551,7 @@ export class Lobby {
       tally[value]++
     }
     p.votes[index] = value
-    if (tally) {
-      this.hooks.broadcast(Events.VotingCounts, {
-        index,
-        up: tally.up,
-        down: tally.down,
-        meh: tally.meh,
-      })
-    }
+    // No live tally broadcast: how people vote stays hidden until the results.
     return null
   }
 
@@ -568,26 +583,17 @@ export class Lobby {
         timeLeft: Math.max(0, Math.ceil((this.captionEndsAt - Date.now()) / 1000)),
       })
     } else if (this.phase === 'voting') {
-      send('phase:voting', {
+      send(Events.PhaseVoting, {
         round: this.round,
         memes: this.memes,
         count: this.memes.length,
         current: this.currentMeme,
         timeLeft: Math.max(0, Math.ceil((this.memeSwitchAt - Date.now()) / 1000)),
       })
-      const tally = this.tallies.get(this.currentMeme)
-      if (tally) {
-        send('voting:counts', {
-          index: this.currentMeme,
-          up: tally.up,
-          down: tally.down,
-          meh: tally.meh,
-        })
-      }
     } else if (this.phase === 'roundResults' && this.lastRoundResult) {
-      send('round:results', this.lastRoundResult)
+      send(Events.RoundResults, this.lastRoundResult)
     } else if (this.phase === 'gameOver' && this.ranking) {
-      send('game:over', { ranking: this.ranking, totalRounds: this.totalRounds })
+      send(Events.GameOver, { ranking: this.ranking, totalRounds: this.totalRounds, memes: this.finalMemes })
     }
     return null
   }
