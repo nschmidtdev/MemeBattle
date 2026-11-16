@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-cert
 COPY package.json package-lock.json* ./
 COPY prisma ./prisma
 # postinstall runs `prisma generate`, which needs prisma/ to be present
-RUN npm install
+RUN npm ci
 
 COPY . .
 RUN npx prisma generate && npx next build

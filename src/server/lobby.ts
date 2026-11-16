@@ -9,6 +9,7 @@ import type {
   VoteTally,
   VoteValue,
 } from '../lib/types'
+import { Events } from '../lib/types'
 import { computeScore } from '../lib/scoring'
 import { loadTemplates } from './templates'
 
@@ -148,6 +149,11 @@ export class Lobby {
     return this.players.size === 0
   }
 
+  /**
+   * Knowing the lobby code plus a playerId rebinds that player to the new socket.
+   * That is a deliberate trade-off for guest party play (no accounts): codes are
+   * short-lived, 5 characters, and shared with friends anyway.
+   */
   join(socketId: string, clientPlayerId: string | null, username: string): { player?: PlayerState; error?: string } {
     const uname = sanitizeUsername(username)
     let player = clientPlayerId ? this.players.get(clientPlayerId) : undefined
@@ -220,7 +226,7 @@ export class Lobby {
     p.connected = false
     p.socketId = null
     p.disconnectedAt = Date.now()
-    this.hooks.broadcast('lobby:update', this.fullLobbyUpdate())
+    this.hooks.broadcast(Events.LobbyUpdate, this.fullLobbyUpdate())
   }
 
   /**
@@ -238,8 +244,9 @@ export class Lobby {
     return this.players.size === 0
   }
 
-  kick(playerId: string): string | null {
-    if (!this.host()?.isHost) return 'Only the host can kick.'
+  kick(socketId: string, playerId: string): string | null {
+    const caller = this.playerBySocket(socketId)
+    if (!caller?.isHost) return 'Only the host can kick.'
     if (this.phase !== 'lobby') return 'The game is already in progress.'
     const target = this.players.get(playerId)
     if (!target) return 'Player not found.'
@@ -247,7 +254,7 @@ export class Lobby {
     // Remove immediately: the kicked client navigates away, and a ghosted removal
     // would linger for GHOST_TTL_MS.
     this.removePlayer(playerId)
-    this.hooks.broadcast('player:kick', { playerId })
+    this.hooks.broadcast(Events.PlayerKick, { playerId })
     return null
   }
 
@@ -260,9 +267,9 @@ export class Lobby {
       this.players.values().next().value!.isHost = true
     }
     if (this.players.size === 0) {
-      this.hooks.broadcast('lobby:empty', {})
+      this.hooks.broadcast(Events.LobbyEmpty, {})
     } else {
-      this.hooks.broadcast('lobby:update', this.fullLobbyUpdate())
+      this.hooks.broadcast(Events.LobbyUpdate, this.fullLobbyUpdate())
     }
   }
 
@@ -278,7 +285,7 @@ export class Lobby {
     if (Array.isArray(settings.packIds)) s.packIds = settings.packIds.filter((x): x is string => typeof x === 'string').slice(0, 10)
     this.settings = s
     this.name = s.lobbyName
-    this.hooks.broadcast('lobby:update', this.fullLobbyUpdate())
+    this.hooks.broadcast(Events.LobbyUpdate, this.fullLobbyUpdate())
     return null
   }
 
@@ -307,7 +314,7 @@ export class Lobby {
   /** Change phase and broadcast the full lobby state so clients switch views. */
   private setPhase(phase: Phase) {
     this.phase = phase
-    this.hooks.broadcast('lobby:update', this.fullLobbyUpdate())
+    this.hooks.broadcast(Events.LobbyUpdate, this.fullLobbyUpdate())
   }
 
   private beginRound(round: number) {
@@ -318,7 +325,7 @@ export class Lobby {
     })
     this.setPhase('caption')
     this.captionEndsAt = Date.now() + this.settings.captionTime * 1000
-    this.hooks.broadcast('phase:caption', {
+    this.hooks.broadcast(Events.PhaseCaption, {
       round,
       totalRounds: this.totalRounds,
       timeLeft: this.settings.captionTime,
@@ -326,7 +333,7 @@ export class Lobby {
     this.players.forEach((pl) => {
       const template = this.dealTemplate(pl)
       if (pl.socketId) {
-        this.hooks.sendTo(pl.socketId, 'caption:template', { template, timeLeft: this.settings.captionTime })
+        this.hooks.sendTo(pl.socketId, Events.CaptionTemplate, { template, timeLeft: this.settings.captionTime })
       }
     })
     this.schedule(() => this.beginVoting(), this.settings.captionTime * 1000)
@@ -362,7 +369,7 @@ export class Lobby {
       return
     }
 
-    this.hooks.broadcast('phase:voting', {
+    this.hooks.broadcast(Events.PhaseVoting, {
       round: this.round,
       memes: this.memes,
       count: this.memes.length,
@@ -375,7 +382,7 @@ export class Lobby {
   private showMeme(index: number) {
     this.currentMeme = index
     this.memeSwitchAt = Date.now() + this.settings.voteTime * 1000
-    this.hooks.broadcast('voting:progress', {
+    this.hooks.broadcast(Events.VotingProgress, {
       index,
       count: this.memes.length,
       timeLeft: this.settings.voteTime,
@@ -418,7 +425,7 @@ export class Lobby {
     }
     this.lastRoundResult = result
     this.setPhase('roundResults')
-    this.hooks.broadcast('round:results', result)
+    this.hooks.broadcast(Events.RoundResults, result)
 
     if (this.round >= this.totalRounds) {
       this.schedule(() => this.gameOver(), 6000)
@@ -440,7 +447,7 @@ export class Lobby {
       .sort((a, b) => b.total - a.total)
     this.ranking = ranking
     this.setPhase('gameOver')
-    this.hooks.broadcast('game:over', { ranking, totalRounds: this.totalRounds })
+    this.hooks.broadcast(Events.GameOver, { ranking, totalRounds: this.totalRounds })
   }
 
   playAgain(socketId: string): string | null {
@@ -457,7 +464,7 @@ export class Lobby {
       pl.totalScore = 0
       pl.roundScores = []
     })
-    this.hooks.broadcast('lobby:update', this.fullLobbyUpdate())
+    this.hooks.broadcast(Events.LobbyUpdate, this.fullLobbyUpdate())
     return null
   }
 
@@ -520,7 +527,7 @@ export class Lobby {
     }
     p.votes[index] = value
     if (tally) {
-      this.hooks.broadcast('voting:counts', {
+      this.hooks.broadcast(Events.VotingCounts, {
         index,
         up: tally.up,
         down: tally.down,
@@ -549,11 +556,11 @@ export class Lobby {
 
   private sendResume(socketId: string, playerId: string): string | null {
     const send = (event: string, payload: unknown) => this.hooks.sendTo(socketId, event, payload)
-    send('lobby:update', this.fullLobbyUpdate())
+    send(Events.LobbyUpdate, this.fullLobbyUpdate())
     if (this.phase === 'caption') {
       const pl = this.players.get(playerId)
       const template = pl ? this.dealTemplate(pl) : null
-      send('caption:template', {
+      send(Events.CaptionTemplate, {
         template,
         timeLeft: Math.max(0, Math.ceil((this.captionEndsAt - Date.now()) / 1000)),
       })

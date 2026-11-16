@@ -14,13 +14,19 @@ export function hashPassword(password: string, salt?: string): { hash: string; s
 }
 
 export function verifyPassword(password: string, salt: string, hash: string): boolean {
-  const h = crypto.scryptSync(password, salt, 64).toString('hex')
-  return crypto.timingSafeEqual(Buffer.from(h, 'hex'), Buffer.from(hash, 'hex'))
+  const h = crypto.scryptSync(password, salt, 64)
+  const stored = Buffer.from(hash, 'hex')
+  // A corrupt/stored-with-other-params hash must fail verification, not throw
+  // inside timingSafeEqual (length mismatch) and turn into a 500.
+  if (stored.length !== h.length) return false
+  return crypto.timingSafeEqual(h, stored)
 }
 
 // --- sessions ---------------------------------------------------------------
 
 export async function createSession(userId: string): Promise<string> {
+  // piggyback cleanup of expired sessions on login (no cron needed)
+  await prisma.adminSession.deleteMany({ where: { expiresAt: { lt: new Date() } } })
   const token = crypto.randomBytes(32).toString('hex')
   const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000)
   await prisma.adminSession.create({ data: { token, userId, expiresAt } })

@@ -90,7 +90,7 @@ All configuration is via environment variables (see `.env.example`):
 | `DATABASE_URL`   | `postgresql://meme:secret@localhost:5432/meme_battle?schema=public` | Postgres connection string |
 | `PORT`           | `3000`                               | HTTP port the app listens on (Docker: always 3000 inside the container) |
 | `APP_PORT`       | `3000`                               | Host port the Docker Compose setup maps the app to (Docker only) |
-| `CORS_ORIGIN`    | same-origin (`*` in dev)             | Allowed origin for socket.io                       |
+| `CORS_ORIGIN`    | same-origin only (set `*` to allow all) | Allowed origin for socket.io        |
 | `ADMIN_EMAIL`    | —                                    | Admin login email. The admin user is created on first boot. |
 | `ADMIN_PASSWORD` | — (auto-generated, printed to log)   | Admin password. Pin it to make login deterministic. |
 | `UPLOAD_DIR`     | `./data/uploads`                     | Where uploaded template images are stored (Docker: `/data/uploads`) |

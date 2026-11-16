@@ -9,7 +9,3 @@ export async function POST() {
   res.cookies.set(SESSION_COOKIE, '', { httpOnly: true, path: '/', maxAge: 0 })
   return res
 }
-
-export async function GET() {
-  return POST()
-}

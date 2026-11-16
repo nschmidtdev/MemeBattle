@@ -190,6 +190,18 @@ async function main() {
   const after = await again
   ok('play-again resets to lobby', after.phase === 'lobby', after.phase)
 
+  // kick: the server must check host rights, not trust the hidden UI button
+  const bKickErr = waitEvent(B, 'client:error', 5000).catch(() => null)
+  B.emit('lobby:kick', { playerId: jA.playerId }) // B is not the host
+  ok('kick by non-host rejected', (await bKickErr)?.message?.includes('host') === true, await bKickErr)
+
+  const bKicked = waitEvent(B, 'player:kick', 5000)
+  A.emit('lobby:kick', { playerId: jB.playerId }) // A (host) kicks B
+  const kEvent = await bKicked
+  ok('host kick broadcasts player:kick', kEvent?.playerId === jB.playerId, kEvent)
+  await until(() => (latest(aUpdates)?.players ?? []).every((p: any) => p.id !== jB.playerId), 5000, 'kicked player removed')
+  ok('kicked player removed from lobby', (latest(aUpdates)?.players ?? []).every((p: any) => p.id !== jB.playerId), latest(aUpdates)?.players?.map((p: any) => p.username))
+
   A.disconnect()
   B.disconnect()
 

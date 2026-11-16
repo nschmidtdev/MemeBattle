@@ -145,11 +145,11 @@ export const Events = {
 
   // server -> client
   LobbyUpdate: 'lobby:update',
-  LobbyClosed: 'lobby:closed',
-  PlayerJoined: 'player:joined',
-  PlayerLeft: 'player:left',
+  LobbyJoined: 'lobby:joined',
+  LobbyEmpty: 'lobby:empty',
   PublicLobbies: 'public:lobbies',
-  GameStart: 'game:start',
+  PlayerKick: 'player:kick',
+  CaptionTemplate: 'caption:template',
   PhaseCaption: 'phase:caption',
   PhaseVoting: 'phase:voting',
   VotingProgress: 'voting:progress',

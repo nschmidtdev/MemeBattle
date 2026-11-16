@@ -42,7 +42,7 @@ export function initSockets(io: Server) {
     })
     const player = lobby.addPlayerPublic(sanitizeUsername(hostUsername), hostSocket.id)
     lobbies.set(code, lobby)
-    lobby.broadcast('lobby:update', lobby.fullLobbyUpdate())
+    lobby.broadcast(Events.LobbyUpdate, lobby.fullLobbyUpdate())
     return { lobby, player }
   }
 
@@ -78,7 +78,7 @@ export function initSockets(io: Server) {
           }
           bind(socket, lobby, res.player.id)
           lobby.broadcast(Events.LobbyUpdate, lobby.fullLobbyUpdate())
-          socket.emit('lobby:joined', { code: lobby.code, playerId: res.player.id })
+          socket.emit(Events.LobbyJoined, { code: lobby.code, playerId: res.player.id })
           lobby.resume(socket.id, res.player.id)
         } else if (data?.create === true) {
           const settings = (data.settings ?? {}) as Partial<LobbySettings>
@@ -90,7 +90,7 @@ export function initSockets(io: Server) {
             username,
           )
           bind(socket, created.lobby, created.player.id)
-          socket.emit('lobby:joined', { code: created.lobby.code, playerId: created.player.id })
+          socket.emit(Events.LobbyJoined, { code: created.lobby.code, playerId: created.player.id })
           created.lobby.resume(socket.id, created.player.id)
         } else {
           // quick play: join an existing public lobby with room, or create one
@@ -107,13 +107,14 @@ export function initSockets(io: Server) {
             }
           }
           if (!target) {
-            const created = createLobby('Quick Play', isPublic || true, DEFAULT_SETTINGS, socket, username)
+            // Quick Play lobbies are always public so others can quick-join into them.
+            const created = createLobby('Quick Play', true, DEFAULT_SETTINGS, socket, username)
             target = created.lobby
             player = created.player
           }
           bind(socket, target, player!.id)
           target.broadcast(Events.LobbyUpdate, target.fullLobbyUpdate())
-          socket.emit('lobby:joined', { code: target.code, playerId: player!.id })
+          socket.emit(Events.LobbyJoined, { code: target.code, playerId: player!.id })
           target.resume(socket.id, player!.id)
         }
       } catch (e) {
@@ -167,7 +168,7 @@ export function initSockets(io: Server) {
     socket.on(Events.Kick, (data: Record<string, unknown>) => {
       const b = socket.data.mb as BoundSocket | undefined
       if (!b) return
-      const err = b.lobby.kick(String(data?.playerId ?? ''))
+      const err = b.lobby.kick(socket.id, String(data?.playerId ?? ''))
       if (err) emitError(socket, err)
     })
 

@@ -10,6 +10,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ key: st
     headers: {
       'Content-Type': image.contentType,
       'Cache-Control': 'public, max-age=3600',
+      // Uploaded SVGs are same-origin documents when opened directly: sandbox
+      // them (stored-XSS guard) and forbid type sniffing.
+      'Content-Security-Policy': 'sandbox',
+      'X-Content-Type-Options': 'nosniff',
     },
   })
 }

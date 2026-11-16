@@ -4,7 +4,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: meme
-      POSTGRES_PASSWORD: secret
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secret}
       POSTGRES_DB: meme_battle
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -21,7 +21,8 @@ services:
       # Overridable via a local .env file or shell environment: APP_PORT=3100
       - "${APP_PORT:-3000}:3000"
     environment:
-      DATABASE_URL: postgresql://meme:secret@db:5432/meme_battle?schema=public
+      # Keep in sync with POSTGRES_PASSWORD above (both default to "secret").
+      DATABASE_URL: postgresql://meme:${POSTGRES_PASSWORD:-secret}@db:5432/meme_battle?schema=public
       PORT: "3000"
       UPLOAD_DIR: /data/uploads
       # Overridable via a local .env file or shell environment (compose

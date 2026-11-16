@@ -99,11 +99,10 @@ export default function LobbyRoom({ code }: { code: string }) {
       lastTickRef.current = Infinity
     }
 
-    socket.on('lobby:joined', onJoined)
+    socket.on(Events.LobbyJoined, onJoined)
     socket.on(Events.LobbyUpdate, onState)
-    socket.on(Events.PlayerJoined, onState)
-    socket.on('lobby:empty', () => router.replace('/'))
-    socket.on(Events.Kick, onKick)
+    socket.on(Events.LobbyEmpty, () => router.replace('/'))
+    socket.on(Events.PlayerKick, onKick)
     socket.on(Events.PhaseCaption, ({ round, totalRounds, timeLeft }: { round: number; totalRounds: number; timeLeft: number }) => {
       setCaption({ template: null, round, totalRounds })
       setVoting(null)

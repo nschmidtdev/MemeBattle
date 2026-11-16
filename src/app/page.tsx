@@ -82,7 +82,7 @@ export default function StartPage() {
       const onJoined = ({ code: c }: { code: string }) => {
         router.push(`/lobby/${c}`)
       }
-      socket.once('lobby:joined', onJoined)
+      socket.once(Events.LobbyJoined, onJoined)
       socket.emit(Events.Join, { code: code ?? undefined, ...id, isPublic })
       if (code) sounds.join()
     },
@@ -102,7 +102,7 @@ export default function StartPage() {
     const socket = socketRef.current
     if (!socket) return
     const onJoined = ({ code: c }: { code: string }) => router.push(`/lobby/${c}`)
-    socket.once('lobby:joined', onJoined)
+    socket.once(Events.LobbyJoined, onJoined)
     socket.emit(Events.Join, {
       create: true,
       ...id,

@@ -1,3 +1,4 @@
+import crypto from 'crypto'
 import { prisma } from './prisma'
 import { hashPassword } from './auth'
 
@@ -13,7 +14,7 @@ export async function ensureAdmin(): Promise<void> {
   if (!admin) {
     let password = process.env.ADMIN_PASSWORD
     if (!password) {
-      password = Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6)
+      password = crypto.randomBytes(12).toString('base64url')
     }
     const { hash, salt } = hashPassword(password)
     admin = await prisma.user.create({
