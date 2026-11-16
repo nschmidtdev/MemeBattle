@@ -174,11 +174,10 @@ export function initSockets(io: Server) {
     socket.on('disconnect', () => {
       const b = socket.data.mb as BoundSocket | undefined
       if (!b) return
-      b.lobby.leave(socket.id)
+      // Ghost the player instead of removing it: client-side navigation disconnects the
+      // previous socket right after joining, and the lobby must survive that.
+      b.lobby.disconnect(socket.id)
       unbind(socket)
-      if (b.lobby.isEmpty()) {
-        lobbies.delete(b.lobby.code)
-      }
     })
   })
 
@@ -186,5 +185,17 @@ export function initSockets(io: Server) {
   setInterval(() => {
     const list = [...lobbies.values()].filter((l) => l.isPublic).map((l) => l.publicInfo())
     io.emit(Events.PublicLobbies, { lobbies: list })
+  }, 5000)
+
+  // remove ghosted players after GHOST_TTL_MS and drop lobbies that are left empty
+  // (covers both TTL expiry and explicit leaves of the last player)
+  setInterval(() => {
+    const now = Date.now()
+    for (const [code, lobby] of [...lobbies]) {
+      if (lobby.sweep(now)) {
+        lobbies.delete(code)
+        lobby.destroy()
+      }
+    }
   }, 5000)
 }

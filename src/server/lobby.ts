@@ -14,6 +14,8 @@ import { loadTemplates } from './templates'
 
 export const MAX_PLAYERS = 30
 export const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+/** Ghosted players (disconnected) are kept this long so a brief reconnect or page navigation can resume them. */
+export const GHOST_TTL_MS = 30_000
 
 const AVATARS = ['🐶', '🐱', '🦊', '🐸', '🐵', '🦄', '🐼', '🦁', '🐷', '🐙', '🦖', '🐔', '🐺', '🦉', '🐯', '🐢', '🦜', '🐭', '🦈', '🐉']
 const COLORS = ['#f44336', '#e91e63', '#9c27b0', '#673ab7', '#3f51b5', '#2196f3', '#03a9f4', '#00bcd4', '#009688', '#4caf50', '#8bc34a', '#ff9800', '#ff5722', '#795548', '#607d8b', '#ffeb3b', '#00e5ff', '#ff4081', '#76ff03', '#ffd740']
@@ -25,6 +27,7 @@ export interface PlayerState {
   color: string
   socketId: string | null
   connected: boolean
+  disconnectedAt: number | null
   isHost: boolean
   submission: CaptionSubmission | null
   votes: Record<number, VoteValue>
@@ -156,6 +159,7 @@ export class Lobby {
     if (player) {
       player.socketId = socketId
       player.connected = true
+      player.disconnectedAt = null
       return { player }
     }
     if (this.phase !== 'lobby') return { error: 'The game is already in progress.' }
@@ -178,6 +182,7 @@ export class Lobby {
       color: free.length ? free[Math.floor(Math.random() * free.length)] : COLORS[Math.floor(Math.random() * COLORS.length)],
       socketId,
       connected: true,
+      disconnectedAt: null,
       isHost: this.players.size === 0,
       submission: null,
       votes: {},
@@ -188,15 +193,49 @@ export class Lobby {
     return p
   }
 
+  /** Explicit leave: the player fully leaves the lobby (in lobby/gameOver phases), or gets ghosted mid-game. */
   leave(socketId: string) {
     const p = this.playerBySocket(socketId)
     if (!p) return
     if (this.phase === 'lobby' || this.phase === 'gameOver') {
       this.removePlayer(p.id)
     } else {
-      p.connected = false
-      p.socketId = null
+      this.ghost(p)
     }
+  }
+
+  /**
+   * Socket went away (navigation, tab close, network drop): ghost the player in ALL phases
+   * so the lobby survives client-side navigation and reconnects. The player is only removed
+   * later by sweep() once it has been gone for GHOST_TTL_MS.
+   * No-op if the player was already re-bound to a newer socket (reconnect race).
+   */
+  disconnect(socketId: string) {
+    const p = this.playerBySocket(socketId)
+    if (!p) return
+    this.ghost(p)
+  }
+
+  private ghost(p: PlayerState) {
+    p.connected = false
+    p.socketId = null
+    p.disconnectedAt = Date.now()
+    this.hooks.broadcast('lobby:update', this.fullLobbyUpdate())
+  }
+
+  /**
+   * Removes ghosted players that have been gone for GHOST_TTL_MS. Only active in the
+   * lobby/gameOver phases; mid-game ghosts persist until the game ends.
+   * Returns true when the lobby is now empty (caller should drop it).
+   */
+  sweep(now: number): boolean {
+    if (this.phase !== 'lobby' && this.phase !== 'gameOver') return false
+    for (const p of [...this.players.values()]) {
+      if (!p.connected && p.disconnectedAt !== null && now - p.disconnectedAt >= GHOST_TTL_MS) {
+        this.removePlayer(p.id)
+      }
+    }
+    return this.players.size === 0
   }
 
   kick(playerId: string): string | null {
@@ -205,7 +244,9 @@ export class Lobby {
     const target = this.players.get(playerId)
     if (!target) return 'Player not found.'
     if (target.isHost) return 'The host cannot be kicked.'
-    // force socket out of the room; the actual removal happens via leave()
+    // Remove immediately: the kicked client navigates away, and a ghosted removal
+    // would linger for GHOST_TTL_MS.
+    this.removePlayer(playerId)
     this.hooks.broadcast('player:kick', { playerId })
     return null
   }
@@ -263,13 +304,19 @@ export class Lobby {
     return null
   }
 
+  /** Change phase and broadcast the full lobby state so clients switch views. */
+  private setPhase(phase: Phase) {
+    this.phase = phase
+    this.hooks.broadcast('lobby:update', this.fullLobbyUpdate())
+  }
+
   private beginRound(round: number) {
     this.round = round
     this.players.forEach((pl) => {
       pl.submission = null
       pl.votes = {}
     })
-    this.phase = 'caption'
+    this.setPhase('caption')
     this.captionEndsAt = Date.now() + this.settings.captionTime * 1000
     this.hooks.broadcast('phase:caption', {
       round,
@@ -307,7 +354,7 @@ export class Lobby {
     this.tallies = new Map()
     this.memes.forEach((_, i) => this.tallies.set(i, { up: 0, down: 0, meh: 0 }))
     this.currentMeme = 0
-    this.phase = 'voting'
+    this.setPhase('voting')
 
     if (this.memes.length === 0) {
       // nobody submitted: skip straight to results
@@ -370,7 +417,7 @@ export class Lobby {
       ;(result.totals as Record<string, number>)[pl.id] = pl.totalScore
     }
     this.lastRoundResult = result
-    this.phase = 'roundResults'
+    this.setPhase('roundResults')
     this.hooks.broadcast('round:results', result)
 
     if (this.round >= this.totalRounds) {
@@ -392,7 +439,7 @@ export class Lobby {
       }))
       .sort((a, b) => b.total - a.total)
     this.ranking = ranking
-    this.phase = 'gameOver'
+    this.setPhase('gameOver')
     this.hooks.broadcast('game:over', { ranking, totalRounds: this.totalRounds })
   }
 
@@ -494,6 +541,7 @@ export class Lobby {
       if (!found) return 'You are not in this lobby.'
       found.socketId = socketId
       found.connected = true
+      found.disconnectedAt = null
       return this.sendResume(socketId, found.id)
     }
     return this.sendResume(socketId, p.id)

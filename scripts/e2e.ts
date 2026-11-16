@@ -1,5 +1,5 @@
 /**
- * E2E smoke test: full 2-player game over sockets + admin API.
+ * E2E smoke test: full 2-player game over sockets, creator-reconnect navigation race, admin API.
  * Run against a live server:  npx tsx scripts/e2e.ts
  */
 import { io, type Socket } from 'socket.io-client'
@@ -101,7 +101,11 @@ async function main() {
   ok('public packs list has a pack', pubPacks.packs?.length > 0, pubPacks)
   const packId: string = pubPacks.packs[0].id
 
+  // Register all post-start waiters BEFORE emitting lobby:start so the
+  // (synchronous) phase:caption + caption:template burst is never missed.
   const aCaption = waitEvent(A, 'phase:caption')
+  const aTpl = waitEvent(A, 'caption:template')
+  const bTpl = waitEvent(B, 'caption:template')
   A.emit('lobby:settings', { rounds: 1, captionTime: 45, voteTime: 3, packIds: [packId] })
   await until(() => latest(aUpdates)?.settings?.rounds === 1 && latest(aUpdates)?.settings?.packIds?.length === 1, 5000, 'settings applied')
   ok('settings updated', latest(aUpdates)?.settings?.voteTime === 3, latest(aUpdates)?.settings)
@@ -109,7 +113,9 @@ async function main() {
 
   const capA = await aCaption
   ok('phase:caption broadcast', capA.round === 1 && capA.totalRounds === 1, capA)
-  const [tplA, tplB] = await Promise.all([waitEvent(A, 'caption:template'), waitEvent(B, 'caption:template')])
+  await until(() => latest(aUpdates)?.phase === 'caption', 5000, 'lobby:update with caption phase')
+  ok('lobby:update carries caption phase', latest(aUpdates)?.phase === 'caption', latest(aUpdates)?.phase)
+  const [tplA, tplB] = await Promise.all([aTpl, bTpl])
   ok('both got a template', !!tplA.template?.imageKey && !!tplB.template?.imageKey, [tplA.template?.name, tplB.template?.name])
 
   // duplicate submit must be rejected
@@ -186,6 +192,34 @@ async function main() {
 
   A.disconnect()
   B.disconnect()
+
+  // ------------------------------------------------------------- navigation race (KD6L4)
+  // StartPage navigates to /lobby/CODE after lobby:joined: the old socket disconnects and a
+  // new socket joins with the same code + playerId. The lobby must survive, and the creator
+  // must be re-bound (no duplicate "Alice 2" player).
+  console.log('\nNavigation race (creator reconnect):')
+  const N1 = connect()
+  await waitEvent(N1, 'connect')
+  const n1Joined = waitEvent(N1, 'lobby:joined')
+  N1.emit('lobby:join', { username: 'Alice', create: true, isPublic: false, lobbyName: 'E2E Nav Lobby' })
+  const n1: { code: string; playerId: string } = await n1Joined
+  ok('nav: creator gets lobby:joined', /^[A-Z0-9]{5}$/.test(n1.code), n1)
+
+  N1.disconnect()
+  const N2 = connect()
+  const n2Updates: any[] = []
+  N2.on('lobby:update', (d) => n2Updates.push(d))
+  await waitEvent(N2, 'connect')
+  const n2Joined = waitEvent(N2, 'lobby:joined')
+  N2.emit('lobby:join', { username: 'Alice', code: n1.code, playerId: n1.playerId })
+  const n2: { code: string; playerId: string } = await n2Joined
+  ok('nav: lobby survives creator navigation', n2.code === n1.code && n2.playerId === n1.playerId, n2)
+
+  await until(() => (latest(n2Updates)?.players?.length ?? 0) >= 1, 5000, 'creator visible again')
+  const navPlayers = latest(n2Updates)?.players ?? []
+  ok('nav: single player, no duplicate', navPlayers.length === 1, navPlayers)
+  ok('nav: creator re-bound as host', navPlayers[0]?.id === n1.playerId && navPlayers[0]?.isHost === true, navPlayers)
+  N2.disconnect()
 
   // ------------------------------------------------------------- admin
   console.log('\nAdmin API:')
