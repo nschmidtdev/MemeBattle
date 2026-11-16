@@ -226,6 +226,46 @@ async function main() {
   A.disconnect()
   B.disconnect()
 
+  // --------------------------------------------- host handover & same-name rejoin
+  console.log('\nHost handover & same-name rejoin:')
+  const R1 = connect()
+  await waitEvent(R1, 'connect')
+  const r1Joined = waitEvent(R1, 'lobby:joined')
+  R1.emit('lobby:join', { username: 'Alice', create: true, isPublic: false, lobbyName: 'E2E Handover' })
+  const r1: { code: string; playerId: string } = await r1Joined
+
+  const R2 = connect()
+  await waitEvent(R2, 'connect')
+  const r2Updates: any[] = []
+  R2.on('lobby:update', (d) => r2Updates.push(d))
+  const r2Joined = waitEvent(R2, 'lobby:joined')
+  R2.emit('lobby:join', { username: 'Bob', code: r1.code })
+  const r2: { code: string; playerId: string } = await r2Joined
+
+  // host disconnects: the role must move to the remaining connected player
+  R1.disconnect()
+  const bIsHost = () => latest(r2Updates)?.players?.find((p: any) => p.id === r2.playerId)?.isHost === true
+  await until(bIsHost, 10000, 'host handed over')
+  ok('host handed over on host disconnect', bIsHost() === true, latest(r2Updates)?.players)
+
+  // joining again with the same name (no playerId) must rebind, not duplicate the seat
+  const R3 = connect()
+  await waitEvent(R3, 'connect')
+  const r3Joined = waitEvent(R3, 'lobby:joined')
+  R3.emit('lobby:join', { username: 'Bob', code: r1.code })
+  const r3: { code: string; playerId: string } = await r3Joined
+  ok('same-name join rebinds instead of duplicating', r3.playerId === r2.playerId, r3)
+
+  const stableSeats = () => {
+    const players = latest(r2Updates)?.players ?? []
+    return players.length === 2 && players.filter((p: any) => p.isHost).length === 1
+  }
+  await until(stableSeats, 5000, 'stable seat list after rejoin')
+  ok('rejoin keeps exactly one seat per name', stableSeats(), latest(r2Updates)?.players?.map((p: any) => p.username))
+
+  R3.disconnect()
+  R2.disconnect()
+
   // ------------------------------------------------------------- navigation race (KD6L4)
   // StartPage navigates to /lobby/CODE after lobby:joined: the old socket disconnects and a
   // new socket joins with the same code + playerId. The lobby must survive, and the creator

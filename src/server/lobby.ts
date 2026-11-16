@@ -167,11 +167,14 @@ export class Lobby {
     const uname = sanitizeUsername(username)
     let player = clientPlayerId ? this.players.get(clientPlayerId) : undefined
     if (!player) {
-      player = [...this.players.values()].find(
-        (p) => !p.connected && p.username.toLowerCase() === uname.toLowerCase(),
-      )
+      // Same name = same player: rebind the existing seat instead of creating a
+      // duplicate ("Alice 2") — no matter whether the old socket is still
+      // connected. A stolen old socket simply stops working (playerBySocket
+      // matches on socketId), its disconnect handler no-ops.
+      player = [...this.players.values()].find((p) => p.username.toLowerCase() === uname.toLowerCase())
     }
     if (player) {
+      player.username = uname
       player.socketId = socketId
       player.connected = true
       player.disconnectedAt = null
@@ -237,7 +240,21 @@ export class Lobby {
     p.connected = false
     p.socketId = null
     p.disconnectedAt = Date.now()
+    // Hand the host role to a connected player right away so the lobby stays
+    // manageable (start/kick/play-again). If nobody else is connected the ghost
+    // keeps the role: a solo host navigating pages gets it back on rebind.
+    if (p.isHost && [...this.players.values()].some((x) => x.connected)) {
+      this.transferHost()
+    }
     this.hooks.broadcast(Events.LobbyUpdate, this.fullLobbyUpdate())
+  }
+
+  /** Give the host role to another player, preferring connected ones. No-op when alone. */
+  private transferHost() {
+    if (this.players.size === 0) return
+    const candidates = [...this.players.values()]
+    const next = candidates.find((x) => x.connected) ?? candidates[0]
+    this.players.forEach((x) => (x.isHost = x.id === next.id))
   }
 
   /**
@@ -273,9 +290,9 @@ export class Lobby {
     const p = this.players.get(playerId)
     if (!p) return
     this.players.delete(playerId)
-    const wasHost = p.isHost
-    if (wasHost && this.players.size > 0) {
-      this.players.values().next().value!.isHost = true
+    if (p.isHost) {
+      // prefer a connected player: map order could otherwise hand the role to a ghost
+      this.transferHost()
     }
     if (this.players.size === 0) {
       this.hooks.broadcast(Events.LobbyEmpty, {})
