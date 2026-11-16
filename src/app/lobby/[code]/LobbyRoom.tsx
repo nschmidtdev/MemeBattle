@@ -38,6 +38,7 @@ export default function LobbyRoom({ code }: { code: string }) {
   const [joined, setJoined] = useState(false)
   const [online, setOnline] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [joinError, setJoinError] = useState<string | null>(null)
   const [muted, setMutedState] = useState(false)
   const [now, setNow] = useState(0)
 
@@ -49,25 +50,27 @@ export default function LobbyRoom({ code }: { code: string }) {
 
   const [nameInput, setNameInput] = useState<string | null>(null)
 
+  // ---------------------------------------------------------------- helpers
+  const tryRejoin = useCallback(() => {
+    const username = getSavedUsername()
+    if (!username) return
+    const pid = getSavedPlayerId() ?? crypto.randomUUID()
+    savePlayerId(pid)
+    setJoinError(null)
+    socketRef.current?.emit(Events.Join, { username, playerId: pid, code: codeRef.current })
+  }, [])
+
   // ---------------------------------------------------------------- socket
   useEffect(() => {
     setMutedState(isMuted())
     const unlock = () => sounds.unlock()
     window.addEventListener('pointerdown', unlock, { once: true })
 
-    const doJoin = (username: string, playerId: string) => {
-      socketRef.current?.emit(Events.Join, { username, playerId, code: codeRef.current })
-    }
-    const tryRejoin = () => {
-      const username = getSavedUsername()
-      if (!username) return
-      const pid = getSavedPlayerId() ?? crypto.randomUUID()
-      savePlayerId(pid)
-      doJoin(username, pid)
-    }
-
     const socket = connectSocket((msg) => {
       setError(msg)
+      // While not joined yet, a server error is fatal for this page (e.g.
+      // lobby no longer exists) — surface it persistently, not just as a toast.
+      if (!myIdRef.current) setJoinError(msg)
       sounds.error()
     })
     socketRef.current = socket
@@ -77,6 +80,7 @@ export default function LobbyRoom({ code }: { code: string }) {
       myIdRef.current = playerId
       setMyId(playerId)
       setJoined(true)
+      setJoinError(null)
       if (c !== codeRef.current) {
         codeRef.current = c
         router.replace(`/lobby/${c}`)
@@ -177,6 +181,7 @@ export default function LobbyRoom({ code }: { code: string }) {
     savePlayerId(pid)
     saveUsername(name)
     setJoined(true)
+    setJoinError(null)
     setNameInput(null)
     socketRef.current?.emit(Events.Join, { username: name, playerId: pid, code: codeRef.current })
   }
@@ -294,6 +299,19 @@ export default function LobbyRoom({ code }: { code: string }) {
                   <h2>Join {code.toUpperCase()}</h2>
                   <p className="muted">Enter a name to join this lobby.</p>
                   <button className="primary" onClick={() => setNameInput('')}>Enter name</button>
+                </>
+              ) : joinError ? (
+                <>
+                  <h2>Join {code.toUpperCase()}</h2>
+                  <p className="muted">{joinError}</p>
+                  <p className="muted" style={{ fontSize: 12 }}>
+                    Lobbies live in server memory — this lobby may have ended or the server may have
+                    been restarted.
+                  </p>
+                  <div className="row" style={{ justifyContent: 'center', marginTop: 12 }}>
+                    <button className="primary" onClick={() => router.replace('/')}>Back to home</button>
+                    <button className="ghost" onClick={() => tryRejoin()}>Try again</button>
+                  </div>
                 </>
               ) : (
                 <p className="muted">Connecting to lobby…</p>
