@@ -2,25 +2,39 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { connectSocket, getSavedUsername, saveUsername, getSavedPlayerId, savePlayerId, type PublicLobbyInfo } from '@/lib/client'
-import { Events } from '@/lib/types'
+import {
+  connectSocket,
+  getSavedPlayerId,
+  getSavedUsername,
+  randomId,
+  savePlayerId,
+  saveUsername,
+  type PublicLobbyInfo,
+} from '@/lib/client'
+import { Events, type PackOption } from '@/lib/types'
 import { sounds } from '@/lib/sounds'
 
-interface PackOption {
-  id: string
-  name: string
-  description: string | null
-  templateCount: number
+type PendingAction = 'quick' | 'code' | 'create' | null
+
+interface PendingJoin {
+  handler: (payload: { code: string }) => void
+  timer: ReturnType<typeof setTimeout>
 }
 
 export default function StartPage() {
   const router = useRouter()
   const socketRef = useRef<ReturnType<typeof connectSocket> | null>(null)
+  /** The one `LobbyJoined` listener + safety timeout for an in-flight join. */
+  const pendingJoinRef = useRef<PendingJoin | null>(null)
 
   const [username, setUsername] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [lobbies, setLobbies] = useState<PublicLobbyInfo[]>([])
-  const [packs, setPacks] = useState<PackOption[]>([])
+  const [packs, setPacks] = useState<PackOption[] | null>(null)
+  const [packsError, setPacksError] = useState<string | null>(null)
+
+  // one-at-a-time join/create state: prevents double taps and double lobbies
+  const [pending, setPending] = useState<PendingAction>(null)
 
   // create form
   const [creating, setCreating] = useState(false)
@@ -38,25 +52,72 @@ export default function StartPage() {
     setUsername(getSavedUsername() ?? '')
   }, [])
 
-  useEffect(() => {
+  const loadPacks = useCallback(() => {
+    setPacks(null)
+    setPacksError(null)
     fetch('/api/packs/public')
-      .then((r) => (r.ok ? r.json() : { packs: [] }))
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.json() as Promise<{ packs?: PackOption[] }>
+      })
       .then((d) => setPacks(d.packs ?? []))
-      .catch(() => {})
-    return () => {}
+      .catch(() => {
+        setPacks(null)
+        setPacksError('Could not load template packs.')
+      })
   }, [])
 
   useEffect(() => {
-    const socket = connectSocket((message) => setError(message))
+    loadPacks()
+  }, [loadPacks])
+
+  /** Drop the in-flight join listener and timeout, if any. */
+  const clearPendingJoin = useCallback(() => {
+    const p = pendingJoinRef.current
+    if (p) {
+      clearTimeout(p.timer)
+      socketRef.current?.off(Events.LobbyJoined, p.handler)
+      pendingJoinRef.current = null
+    }
+    setPending(null)
+  }, [])
+
+  /** Wait for the next `lobby:joined`; the socket error handler cancels this. */
+  const awaitJoin = useCallback(
+    (onJoined: (code: string) => void) => {
+      const socket = socketRef.current
+      if (!socket) return
+      clearPendingJoin()
+      const handler = ({ code: c }: { code: string }) => {
+        clearPendingJoin()
+        onJoined(c)
+      }
+      const timer = setTimeout(() => {
+        clearPendingJoin()
+        setError('No response from the server — please try again.')
+      }, 10_000)
+      pendingJoinRef.current = { handler, timer }
+      socket.on(Events.LobbyJoined, handler)
+    },
+    [clearPendingJoin],
+  )
+
+  useEffect(() => {
+    const socket = connectSocket((message) => {
+      setError(message)
+      // A join that fails must release the button, not stay pending forever.
+      clearPendingJoin()
+    })
     socketRef.current = socket
     const onList = ({ lobbies: list }: { lobbies: PublicLobbyInfo[] }) => setLobbies(list ?? [])
     socket.on(Events.PublicLobbies, onList)
     socket.emit(Events.PublicList)
     return () => {
+      clearPendingJoin()
       socket.off(Events.PublicLobbies, onList)
       socket.disconnect()
     }
-  }, [])
+  }, [clearPendingJoin])
 
   const identity = useCallback(() => {
     const name = username.trim()
@@ -67,7 +128,7 @@ export default function StartPage() {
     saveUsername(name)
     let pid = getSavedPlayerId()
     if (!pid) {
-      pid = crypto.randomUUID()
+      pid = randomId()
       savePlayerId(pid)
     }
     return { username: name, playerId: pid }
@@ -75,18 +136,21 @@ export default function StartPage() {
 
   const joinLobby = useCallback(
     (code: string | null, isPublic = true) => {
+      if (pendingJoinRef.current) return // tap already in flight
       const id = identity()
       if (!id) return
       const socket = socketRef.current
-      if (!socket) return
-      const onJoined = ({ code: c }: { code: string }) => {
-        router.push(`/lobby/${c}`)
+      if (!socket) {
+        setError('Not connected yet — please try again in a moment.')
+        return
       }
-      socket.once(Events.LobbyJoined, onJoined)
+      awaitJoin((c) => router.push(`/lobby/${c}`))
+      // awaitJoin clears any previous pending state, so mark this one afterwards.
+      setPending(code ? 'code' : 'quick')
       socket.emit(Events.Join, { code: code ?? undefined, ...id, isPublic })
       if (code) sounds.join()
     },
-    [identity, router],
+    [awaitJoin, identity, router],
   )
 
   const quickPlay = useCallback(() => joinLobby(null), [joinLobby])
@@ -97,12 +161,17 @@ export default function StartPage() {
   }, [codeInput, joinLobby])
 
   const createLobby = useCallback(() => {
+    if (pendingJoinRef.current) return
     const id = identity()
     if (!id) return
     const socket = socketRef.current
-    if (!socket) return
-    const onJoined = ({ code: c }: { code: string }) => router.push(`/lobby/${c}`)
-    socket.once(Events.LobbyJoined, onJoined)
+    if (!socket) {
+      setError('Not connected yet — please try again in a moment.')
+      return
+    }
+    awaitJoin((c) => router.push(`/lobby/${c}`))
+    // awaitJoin clears any previous pending state, so mark this one afterwards.
+    setPending('create')
     socket.emit(Events.Join, {
       create: true,
       ...id,
@@ -111,14 +180,14 @@ export default function StartPage() {
       settings: { rounds, captionTime, voteTime, packIds },
     })
     sounds.join()
-  }, [identity, isPublic, name, packIds, captionTime, rounds, router])
+  }, [awaitJoin, identity, isPublic, name, packIds, captionTime, rounds, voteTime, router])
 
   const togglePack = (id: string) => {
     setPackIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
   }
 
-  const allPacksSelected = packs.length > 0 && packIds.length === packs.length
-  const selectAll = () => setPackIds(allPacksSelected ? [] : packs.map((p) => p.id))
+  const busy = pending !== null
+  const allPacksSelected = (packs?.length ?? 0) > 0 && packIds.length === packs?.length
 
   return (
     <main className="mx-auto max-w-3xl px-4 pb-16 pt-8 sm:pt-12">
@@ -155,14 +224,15 @@ export default function StartPage() {
               maxLength={16}
               className="w-full rounded-xl border border-line bg-night py-3 pl-10 pr-3 text-base font-semibold"
               onChange={(e) => setUsername(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && quickPlay()}
+              onKeyDown={(e) => e.key === 'Enter' && !busy && quickPlay()}
             />
           </div>
           <button
-            className="rounded-xl bg-gradient-to-r from-punch to-punch2 px-8 py-3 text-lg font-extrabold uppercase tracking-wide text-night shadow-lg transition hover:brightness-110 active:translate-y-px"
+            className="rounded-xl bg-gradient-to-r from-punch to-punch2 px-8 py-3 text-lg font-extrabold uppercase tracking-wide text-night shadow-lg transition hover:brightness-110 active:translate-y-px disabled:cursor-default disabled:opacity-50 disabled:hover:brightness-100"
             onClick={quickPlay}
+            disabled={busy}
           >
-            ⚡ Quick Play
+            {pending === 'quick' ? 'Joining…' : '⚡ Quick Play'}
           </button>
         </div>
 
@@ -175,19 +245,20 @@ export default function StartPage() {
               maxLength={6}
               className="w-32 flex-none rounded-xl border border-line bg-night px-3 py-2.5 text-center font-mono text-lg font-bold uppercase tracking-[0.25em]"
               onChange={(e) => setCodeInput(e.target.value.toUpperCase())}
-              onKeyDown={(e) => e.key === 'Enter' && joinByCode()}
+              onKeyDown={(e) => e.key === 'Enter' && !busy && joinByCode()}
             />
             <button
               className="flex-1 rounded-xl border border-line bg-night2 py-2.5 font-bold transition hover:border-dim disabled:opacity-40"
               onClick={joinByCode}
-              disabled={!codeInput.trim()}
+              disabled={busy || !codeInput.trim()}
             >
-              Join by code
+              {pending === 'code' ? 'Joining…' : 'Join by code'}
             </button>
           </div>
           <button
-            className={`rounded-xl border py-2.5 font-bold transition ${creating ? 'border-rose/60 text-rose' : 'border-sky/60 text-sky hover:bg-sky/10'}`}
+            className={`rounded-xl border py-2.5 font-bold transition disabled:opacity-40 ${creating ? 'border-rose/60 text-rose' : 'border-sky/60 text-sky hover:bg-sky/10'}`}
             onClick={() => setCreating((c) => !c)}
+            disabled={busy}
           >
             {creating ? 'Cancel' : '⚙ Create lobby'}
           </button>
@@ -227,7 +298,7 @@ export default function StartPage() {
                 <span className="mb-1 flex justify-between text-xs font-semibold uppercase tracking-wider text-dim">
                   Vote / meme <b className="text-sun">{voteTime}s</b>
                 </span>
-                <input type="range" min={5} max={30} className="w-full accent-punch" value={voteTime} onChange={(e) => setVoteTime(+e.target.value)} />
+                <input type="range" min={5} max={30} step={1} className="w-full accent-punch" value={voteTime} onChange={(e) => setVoteTime(+e.target.value)} />
               </label>
             </div>
 
@@ -236,15 +307,28 @@ export default function StartPage() {
                 <span className="text-xs font-semibold uppercase tracking-wider text-dim">
                   Template packs <span className="text-sun">{packIds.length} selected</span>
                 </span>
-                <button className="text-xs text-dim underline hover:text-ink" onClick={selectAll}>
+                <button
+                  className="text-xs text-dim underline hover:text-ink disabled:opacity-40"
+                  onClick={() => setPackIds(allPacksSelected ? [] : (packs ?? []).map((p) => p.id))}
+                  disabled={!packs || packs.length === 0}
+                >
                   {allPacksSelected ? 'clear all' : 'select all'}
                 </button>
               </div>
               <div className="flex flex-wrap gap-2">
-                {packs.length === 0 && (
+                {packs === null && !packsError && (
+                  <p className="animate-pulse text-sm text-dim">Loading template packs…</p>
+                )}
+                {packsError && (
+                  <p className="flex items-center gap-2 text-sm text-rose">
+                    {packsError}
+                    <button className="underline hover:text-ink" onClick={loadPacks}>Retry</button>
+                  </p>
+                )}
+                {packs !== null && packs.length === 0 && (
                   <p className="text-sm text-dim">No template packs yet — an admin needs to create some.</p>
                 )}
-                {packs.map((p) => {
+                {(packs ?? []).map((p) => {
                   const on = packIds.includes(p.id)
                   return (
                     <button
@@ -263,11 +347,11 @@ export default function StartPage() {
             </div>
 
             <button
-              className="w-full rounded-xl bg-gradient-to-r from-punch to-punch2 py-3 text-lg font-extrabold uppercase tracking-wide text-night shadow-lg transition hover:brightness-110 disabled:opacity-40"
+              className="w-full rounded-xl bg-gradient-to-r from-punch to-punch2 py-3 text-lg font-extrabold uppercase tracking-wide text-night shadow-lg transition hover:brightness-110 disabled:opacity-40 disabled:hover:brightness-100"
               onClick={createLobby}
-              disabled={packIds.length === 0}
+              disabled={packIds.length === 0 || busy}
             >
-              Create &amp; join 🚀
+              {pending === 'create' ? 'Creating lobby…' : 'Create & join 🚀'}
             </button>
           </div>
         )}
@@ -301,7 +385,7 @@ export default function StartPage() {
               )}
               <button
                 className="rounded-lg border border-mint/60 px-4 py-1.5 text-sm font-bold text-mint transition hover:bg-mint/10 disabled:opacity-40"
-                disabled={l.inGame}
+                disabled={l.inGame || busy}
                 onClick={() => joinLobby(l.code)}
               >
                 Join

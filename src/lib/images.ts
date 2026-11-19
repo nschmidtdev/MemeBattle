@@ -5,3 +5,6 @@
 export function imageUrl(key: string): string {
   return `/api/images/${encodeURIComponent(key)}`
 }
+
+/** MIME types the upload endpoint accepts (SVG is rejected by the server). */
+export const UPLOAD_ACCEPT = 'image/png,image/jpeg,image/gif,image/webp'

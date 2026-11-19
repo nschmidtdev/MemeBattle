@@ -2,17 +2,85 @@
 // always produces the same image. No stored meme files — everything is drawn
 // from data, which keeps storage at zero and makes downloads trivial.
 
+import { LINE_BOUNDS, ROTATION_BOUNDS, TEXT_WIDTH_BOUNDS } from './types'
 import type { CaptionSubmission, FreeformLine, RenderTextItem, TemplateBox, TemplateData } from './types'
+import { imageUrl } from './images'
+
+/** Clamp a numeric value the same way the server validates submissions. */
+export function clampMemeValue(value: number, min: number, max: number): number {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return min
+  return Math.min(max, Math.max(min, n))
+}
+
+/**
+ * Keep a freeform line inside the same bounds the server enforces, so the
+ * editor preview and the voting canvas cannot drift apart.
+ */
+export function clampFreeformLine(line: FreeformLine): FreeformLine {
+  return {
+    ...line,
+    x: clampMemeValue(line.x, LINE_BOUNDS.xMin, LINE_BOUNDS.xMax),
+    y: clampMemeValue(line.y, LINE_BOUNDS.yMin, LINE_BOUNDS.yMax),
+    w: clampMemeValue(line.w, TEXT_WIDTH_BOUNDS.min, TEXT_WIDTH_BOUNDS.max),
+    fontSize: clampMemeValue(line.fontSize, LINE_BOUNDS.fontSizeMin, LINE_BOUNDS.fontSizeMax),
+    rotation: clampMemeValue(line.rotation, ROTATION_BOUNDS.min, ROTATION_BOUNDS.max),
+  }
+}
+
+/**
+ * Family stack shared by the DOM editor and the canvas renderer.
+ * Impact is mapped to the bundled Anton face (with Impact as fallback).
+ */
+export function memeFontFamily(font: string): string {
+  const name = memeFontName(font)
+  if (name.toLowerCase() === 'impact' || name.toLowerCase() === 'anton') {
+    return `'Anton', Impact, 'Arial Black', sans-serif`
+  }
+  return `'${name}', Impact, 'Arial Black', sans-serif`
+}
+
+/** Weight shared by the DOM editor and the canvas renderer. */
+export function memeFontWeight(font: string): number {
+  const name = memeFontName(font).toLowerCase()
+  return name === 'impact' || name === 'anton' ? 900 : 700
+}
+
+function memeFontName(font: string): string {
+  return (font || 'Impact').replace(/['"\\]/g, '').trim() || 'Impact'
+}
+
+/** Complete canvas font shorthand (must match the editor's family + weight). */
+export function memeCanvasFont(font: string, sizePx: number): string {
+  return `${memeFontWeight(font)} ${Math.max(1, sizePx)}px ${memeFontFamily(font)}`
+}
+
+/**
+ * Make sure the bundled display font is decoded before any canvas text is
+ * drawn; canvas does not wait for webfonts on its own.
+ */
+export async function ensureMemeFontsReady(): Promise<void> {
+  if (typeof document === 'undefined' || !document.fonts) return
+  try {
+    await document.fonts.load('900 16px Anton')
+    await document.fonts.ready
+  } catch {
+    // Font loading is best effort: Impact / Arial Black remain as fallbacks.
+  }
+}
 
 /** Merge template boxes with the player's text into renderable text items. */
 export function buildTextItems(template: TemplateData, submission: CaptionSubmission): RenderTextItem[] {
   // Freeform submissions (every caption is edited with the freeform editor now):
   // the placed lines carry all placement info themselves.
-  const lines = (submission.lines ?? []).filter((l) => l && typeof l.text === 'string' && l.text.trim() !== '')
+  const submissionLines = submission.lines ?? []
+  const lines = submissionLines.filter((l) => l && typeof l.text === 'string' && l.text.trim() !== '')
   if (lines.length > 0) {
     return lines.map((l) => toRenderItem(l, l.text))
   }
-  if (template.isFreeform) return []
+  // A freeform submission with only empty lines must not fall back to the
+  // template's default texts.
+  if (submissionLines.length > 0 || template.isFreeform) return []
   // Legacy fixed-slot submissions (boxId -> text)
   return template.boxes
     .map((box) => {
@@ -27,15 +95,15 @@ function toRenderItem(box: TemplateBox | FreeformLine, text: string): RenderText
   return {
     id: box.id,
     text,
-    x: box.x,
-    y: box.y,
-    w: box.w,
-    fontSize: box.fontSize,
+    x: clampMemeValue(box.x, LINE_BOUNDS.xMin, LINE_BOUNDS.xMax),
+    y: clampMemeValue(box.y, LINE_BOUNDS.yMin, LINE_BOUNDS.yMax),
+    w: clampMemeValue(box.w, TEXT_WIDTH_BOUNDS.min, TEXT_WIDTH_BOUNDS.max),
+    fontSize: clampMemeValue(box.fontSize, LINE_BOUNDS.fontSizeMin, LINE_BOUNDS.fontSizeMax),
     color: box.color,
     stroke: box.stroke,
     font: box.font,
     align: box.align,
-    rotation: box.rotation,
+    rotation: clampMemeValue(box.rotation, ROTATION_BOUNDS.min, ROTATION_BOUNDS.max),
   }
 }
 
@@ -45,10 +113,17 @@ export interface RenderedMeme {
   canvas: HTMLCanvasElement
 }
 
+function isVectorSource(url: string): boolean {
+  return /\.svg(?:[?#]|$)/i.test(url)
+}
+
 /**
  * Draw the template image + all text onto a canvas.
  * `image` is the decoded HTMLImageElement for the template (SVG works fine).
  * Text uses relative coordinates so output is resolution-independent.
+ *
+ * Vectors may be upscaled to `maxDim`; raster images are only ever downscaled
+ * so a small bitmap does not turn into a blurry, oversized canvas.
  */
 export function renderMeme(
   template: TemplateData,
@@ -56,9 +131,20 @@ export function renderMeme(
   image: HTMLImageElement,
   maxDim = 640,
 ): HTMLCanvasElement {
-  const iw = image.naturalWidth || 800
-  const ih = image.naturalHeight || 800
-  const scale = Math.min(1, maxDim / Math.max(iw, ih))
+  const vector = isVectorSource(image.currentSrc || image.src || '') || isVectorSource(template.imageKey)
+
+  // Never derive the aspect ratio from the browser's 0 / 300×150 placeholder
+  // size for SVG images. Without intrinsic dimensions we fall back to 4:3.
+  let iw = Number(image.naturalWidth) || 0
+  let ih = Number(image.naturalHeight) || 0
+  if (iw <= 0 || ih <= 0 || (vector && iw === 300 && ih === 150)) {
+    iw = 800
+    ih = 600
+  }
+
+  const longest = Math.max(iw, ih)
+  const target = Math.max(1, maxDim)
+  const scale = vector ? target / longest : Math.min(1, target / longest)
   const W = Math.max(1, Math.round(iw * scale))
   const H = Math.max(1, Math.round(ih * scale))
 
@@ -68,6 +154,7 @@ export function renderMeme(
   const ctx = canvas.getContext('2d')
   if (!ctx) return canvas
 
+  ctx.imageSmoothingEnabled = true
   ctx.imageSmoothingQuality = 'high'
   ctx.drawImage(image, 0, 0, W, H)
 
@@ -82,7 +169,8 @@ function drawTextItem(ctx: CanvasRenderingContext2D, item: RenderTextItem, W: nu
   const maxWidth = Math.max(10, item.w * W)
   const cx = item.x * W
   const cy = item.y * H
-  const lines = wrapText(ctx, item.text, item.font, fontSize, maxWidth)
+  ctx.font = memeCanvasFont(item.font, fontSize)
+  const lines = wrapMemeText(ctx, item.text, item.font, fontSize, maxWidth)
 
   ctx.save()
   ctx.translate(cx, cy)
@@ -91,7 +179,7 @@ function drawTextItem(ctx: CanvasRenderingContext2D, item: RenderTextItem, W: nu
   const lineHeight = fontSize * 1.05
   const totalHeight = lines.length * lineHeight
   const strokeW = Math.max(1, fontSize * 0.09)
-  ctx.font = `${item.font === 'Impact' ? '900 ' : ''}${fontSize}px ${item.font}, sans-serif`
+  ctx.font = memeCanvasFont(item.font, fontSize)
   ctx.textAlign = item.align
   ctx.textBaseline = 'middle'
   ctx.lineJoin = 'round'
@@ -109,34 +197,63 @@ function drawTextItem(ctx: CanvasRenderingContext2D, item: RenderTextItem, W: nu
   ctx.restore()
 }
 
-function wrapText(ctx: CanvasRenderingContext2D, text: string, font: string, fontSize: number, maxWidth: number): string[] {
-  const words = text.replace(/\r/g, '').split(/\n/).flatMap((line) => line.split(' '))
+/**
+ * Greedy word wrap that mirrors CSS `pre-line` + `overflow-wrap: anywhere`:
+ * newlines are hard breaks, runs of spaces collapse, and a word that is wider
+ * than the block is broken character by character.
+ */
+export function wrapMemeText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  font: string,
+  fontSize: number,
+  maxWidth: number,
+): string[] {
+  ctx.font = memeCanvasFont(font, fontSize)
   const lines: string[] = []
-  let current = ''
+  const logicalLines = text.replace(/\r\n?/g, '\n').split('\n')
 
-  for (const word of words) {
-    const attempt = current ? `${current} ${word}` : word
-    ctx.font = `${font === 'Impact' ? '900 ' : ''}${fontSize}px ${font}, sans-serif`
-    if (word && ctx.measureText(attempt).width > maxWidth && current) {
-      lines.push(current)
-      current = word
-    } else {
-      current = attempt
+  for (const raw of logicalLines) {
+    // Same whitespace handling as CSS white-space: pre-line (ASCII spaces/tabs
+    // collapse; non-breaking spaces stay intact, unlike String.trim()).
+    const normalized = raw.replace(/[ \t\f\v]+/g, ' ').replace(/^ +| +$/g, '')
+    if (!normalized) {
+      lines.push('')
+      continue
     }
-  }
-  if (current) lines.push(current)
-  return lines.length ? lines : ['']
-}
 
-/** Render + return a PNG data URL (for the download button). */
-export function memeToPngDataUrl(
-  template: TemplateData,
-  submission: CaptionSubmission,
-  image: HTMLImageElement,
-  maxDim = 1024,
-): string {
-  const canvas = renderMeme(template, submission, image, maxDim)
-  return canvas.toDataURL('image/png')
+    let current = ''
+    for (const word of normalized.split(' ')) {
+      const attempt = current ? `${current} ${word}` : word
+      if (ctx.measureText(attempt).width <= maxWidth) {
+        current = attempt
+        continue
+      }
+      if (current) {
+        lines.push(current)
+        current = ''
+      }
+      if (ctx.measureText(word).width <= maxWidth) {
+        current = word
+        continue
+      }
+      // Very long word: fill the current line character by character.
+      let chunk = ''
+      for (const ch of word) {
+        const next = chunk + ch
+        if (chunk && ctx.measureText(next).width > maxWidth) {
+          lines.push(chunk)
+          chunk = ch
+        } else {
+          chunk = next
+        }
+      }
+      current = chunk
+    }
+    if (current) lines.push(current)
+  }
+
+  return lines.length ? lines : ['']
 }
 
 /** Load an image element from a URL (cross-origin safe when same-origin). */
@@ -147,4 +264,40 @@ export function loadImage(url: string): Promise<HTMLImageElement> {
     img.onerror = () => reject(new Error(`Failed to load image: ${url}`))
     img.src = url
   })
+}
+
+/**
+ * Render the meme at download resolution and trigger a browser download.
+ * Returns false on any failure (image, canvas, blob or missing DOM).
+ */
+export async function downloadMemePng(
+  template: TemplateData,
+  submission: CaptionSubmission,
+  filename: string,
+): Promise<boolean> {
+  try {
+    if (typeof document === 'undefined') return false
+
+    await ensureMemeFontsReady()
+    const image = await loadImage(imageUrl(template.imageKey))
+    const canvas = renderMeme(template, submission, image, 1024)
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
+    if (!blob) return false
+
+    const objectUrl = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    const safeName = filename.trim() || 'meme'
+    anchor.href = objectUrl
+    anchor.download = /\.png$/i.test(safeName) ? safeName : `${safeName}.png`
+    anchor.rel = 'noopener'
+    anchor.style.display = 'none'
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    // Give the browser a moment to start the download before releasing the blob.
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1500)
+    return true
+  } catch {
+    return false
+  }
 }

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { imageUrl } from '@/lib/images'
+import { UPLOAD_ACCEPT, imageUrl } from '@/lib/images'
 import TemplateEditor, { type AdminTemplate } from './TemplateEditor'
 
 interface AdminPack {
@@ -20,19 +20,15 @@ interface Props {
   email: string
 }
 
-async function api(url: string, init?: RequestInit) {
-  const res = await fetch(url, init)
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`)
-  return data
-}
-
 export default function AdminPanel({ email }: Props) {
   const router = useRouter()
   const [packs, setPacks] = useState<AdminPack[] | null>(null)
   const [templates, setTemplates] = useState<AdminTemplate[] | null>(null)
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [editing, setEditing] = useState<AdminTemplate | null>(null)
+  const [addingPack, setAddingPack] = useState(false)
+  const [addingTemplate, setAddingTemplate] = useState<string | null>(null)
 
   // new pack form
   const [newPackName, setNewPackName] = useState('')
@@ -40,23 +36,51 @@ export default function AdminPanel({ email }: Props) {
   // per-pack new template form
   const [newTpl, setNewTpl] = useState<Record<string, { name: string; file: File | null }>>({})
 
+  const api = useCallback(
+    async (url: string, init?: RequestInit) => {
+      const res = await fetch(url, init)
+      const data = await res.json().catch(() => ({}))
+      if (res.status === 401) {
+        // Session expired or the cookie was cleared: go back to the login page.
+        router.replace('/admin/login')
+        throw new Error('Session expired — please sign in again.')
+      }
+      if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`)
+      return data
+    },
+    [router],
+  )
+
   const load = useCallback(async () => {
+    setLoading(true)
     try {
-      const [packData, tplData] = await Promise.all([
-        api('/api/packs'),
-        api('/api/templates'),
-      ])
+      const [packData, tplData] = await Promise.all([api('/api/packs'), api('/api/templates')])
       setPacks(packData.packs)
       setTemplates(tplData.templates)
       setError(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load')
+    } finally {
+      setLoading(false)
     }
-  }, [])
+  }, [api])
 
   useEffect(() => {
     load()
   }, [load])
+
+  // Re-fetch a single template after a conflict (409) in the editor.
+  const reloadTemplate = useCallback(
+    async (id: string): Promise<AdminTemplate | null> => {
+      const data = await api('/api/templates')
+      const list: AdminTemplate[] = data.templates ?? []
+      setTemplates(list)
+      const fresh = list.find((t) => t.id === id) ?? null
+      if (fresh) setEditing(fresh)
+      return fresh
+    },
+    [api],
+  )
 
   const run = (fn: () => Promise<unknown>) =>
     fn().catch((e) => setError(e instanceof Error ? e.message : 'Request failed'))
@@ -71,7 +95,19 @@ export default function AdminPanel({ email }: Props) {
     return (
       <div className="container">
         <h1>Admin</h1>
-        <p className="muted">Loading…</p>
+        {error && (
+          <div className="error-banner row spread">
+            <span>{error}</span>
+            <button className="ghost" disabled={loading} onClick={() => load()}>
+              {loading ? 'Retrying…' : 'Retry'}
+            </button>
+          </div>
+        )}
+        {loading ? (
+          <p className="muted">Loading…</p>
+        ) : (
+          !error && <p className="muted">No data.</p>
+        )}
       </div>
     )
   }
@@ -118,24 +154,30 @@ export default function AdminPanel({ email }: Props) {
           />
           <button
             className="primary"
-            disabled={!newPackName.trim()}
-            onClick={() =>
+            disabled={!newPackName.trim() || addingPack}
+            onClick={() => {
+              if (addingPack) return
               run(async () => {
-                await api('/api/packs', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    name: newPackName.trim(),
-                    description: newPackDesc.trim() || null,
-                  }),
-                })
-                setNewPackName('')
-                setNewPackDesc('')
-                await load()
+                setAddingPack(true)
+                try {
+                  await api('/api/packs', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      name: newPackName.trim(),
+                      description: newPackDesc.trim() || null,
+                    }),
+                  })
+                  setNewPackName('')
+                  setNewPackDesc('')
+                  await load()
+                } finally {
+                  setAddingPack(false)
+                }
               })
-            }
+            }}
           >
-            Add pack
+            {addingPack ? 'Adding…' : 'Add pack'}
           </button>
         </div>
       </div>
@@ -214,6 +256,7 @@ export default function AdminPanel({ email }: Props) {
               {templatesFor(p.id).map((t) => (
                 <tr key={t.id}>
                   <td>
+                    {/* eslint-disable-next-line @next/next/no-img-element -- admin thumbnail for arbitrary uploaded images */}
                     <img
                       className="thumb"
                       src={imageUrl(t.imageKey)}
@@ -276,7 +319,13 @@ export default function AdminPanel({ email }: Props) {
           </table>
 
           {editing?.packId === p.id && (
-            <TemplateEditor template={editing} onClose={() => setEditing(null)} onSaved={() => load()} />
+            <TemplateEditor
+              key={editing.id}
+              template={editing}
+              onClose={() => setEditing(null)}
+              onSaved={() => load()}
+              onReload={reloadTemplate}
+            />
           )}
 
           <div className="row" style={{ gap: 8, marginTop: 10, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -285,37 +334,56 @@ export default function AdminPanel({ email }: Props) {
               value={newTpl[p.id]?.name ?? ''}
               maxLength={60}
               placeholder="Template name"
-              onChange={(e) => setNewTpl({ ...newTpl, [p.id]: { name: e.target.value, file: newTpl[p.id]?.file ?? null } })}
+              onChange={(e) =>
+                setNewTpl((prev) => ({
+                  ...prev,
+                  [p.id]: { name: e.target.value, file: prev[p.id]?.file ?? null },
+                }))
+              }
               style={{ width: 180 }}
             />
             <input
               type="file"
-              accept="image/*"
-              onChange={(e) => setNewTpl({ ...newTpl, [p.id]: { name: newTpl[p.id]?.name ?? '', file: e.target.files?.[0] ?? null } })}
+              accept={UPLOAD_ACCEPT}
+              onChange={(e) =>
+                setNewTpl((prev) => ({
+                  ...prev,
+                  [p.id]: { name: prev[p.id]?.name ?? '', file: e.target.files?.[0] ?? null },
+                }))
+              }
             />
             <button
               className="primary"
-              disabled={!newTpl[p.id]?.name?.trim() || !newTpl[p.id]?.file}
-              onClick={() =>
+              disabled={!newTpl[p.id]?.name?.trim() || !newTpl[p.id]?.file || addingTemplate !== null}
+              onClick={() => {
+                if (addingTemplate) return
+                const name = newTpl[p.id]?.name.trim() ?? ''
+                const file = newTpl[p.id]?.file
+                if (!name || !file) return
                 run(async () => {
-                  const form = new FormData()
-                  form.append('file', newTpl[p.id]!.file!)
-                  const up = await api('/api/upload', { method: 'POST', body: form })
-                  await api('/api/templates', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                      packId: p.id,
-                      name: newTpl[p.id]!.name.trim(),
-                      imageKey: up.key,
-                    }),
-                  })
-                  setNewTpl({ ...newTpl, [p.id]: { name: '', file: null } })
-                  await load()
+                  setAddingTemplate(p.id)
+                  try {
+                    const form = new FormData()
+                    form.append('file', file)
+                    const up = await api('/api/upload', { method: 'POST', body: form })
+                    await api('/api/templates', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        packId: p.id,
+                        name,
+                        imageKey: up.key,
+                      }),
+                    })
+                    setNewTpl((prev) => ({ ...prev, [p.id]: { name: '', file: null } }))
+                    await load()
+                  } finally {
+                    setAddingTemplate(null)
+                  }
                 })
-              }
+              }}
             >
-              Add template
+              {addingTemplate === p.id ? 'Adding…' : 'Add template'}
             </button>
           </div>
         </div>

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import type { CaptionSubmission, FreeformLine, TemplateData } from '@/lib/types'
+import { clampFreeformLine } from '@/lib/meme'
 import FreeformEditor from './FreeformEditor'
 
 interface Props {
@@ -11,6 +12,27 @@ interface Props {
   rerollsLeft: number
   onReroll: () => void
   onSubmit: (submission: CaptionSubmission) => void
+  /** Controlled by the parent so a reconnected player resumes read-only. */
+  submitted?: boolean
+  submission?: CaptionSubmission | null
+}
+
+function templateStartLines(template: TemplateData): FreeformLine[] {
+  return template.boxes.map((b) =>
+    clampFreeformLine({
+      id: b.id,
+      text: '',
+      x: b.x,
+      y: b.y,
+      w: b.w,
+      fontSize: b.fontSize,
+      color: b.color,
+      stroke: b.stroke,
+      font: b.font,
+      align: b.align,
+      rotation: b.rotation,
+    }),
+  )
 }
 
 /**
@@ -19,38 +41,67 @@ interface Props {
  * lines — the player can move, restyle, delete them and add more.
  * Rerolling trades the template but keeps the texts already placed.
  */
-export default function CaptionView({ template, round, totalRounds, rerollsLeft, onReroll, onSubmit }: Props) {
+export default function CaptionView({
+  template,
+  round,
+  totalRounds,
+  rerollsLeft,
+  onReroll,
+  onSubmit,
+  submitted,
+  submission,
+}: Props) {
   const [lines, setLines] = useState<FreeformLine[]>([])
-  const [submitted, setSubmitted] = useState(false)
+  const [localSubmitted, setLocalSubmitted] = useState(false)
+  const [rerollPending, setRerollPending] = useState(false)
   const linesRef = useRef(lines)
   linesRef.current = lines
 
-  // reset when a new template arrives for the round; on a reroll the already
-  // placed lines are kept (only the very first empty editor is prefilled)
+  const isSubmitted = submitted ?? localSubmitted
+  const templateKey = template ? `${template.id}|${template.imageKey}` : null
+  const lastTemplateKey = useRef<string | null>(null)
+  const submissionLines = submission?.lines ?? null
+
+  // Prefill from the template's boxes. A real template change (reroll) only
+  // replaces the lines when the player has not written any text yet; otherwise
+  // their texts stay. `submitted` is never reset here: only the parent's round
+  // `key` remounts this view.
   useEffect(() => {
-    setSubmitted(false)
     if (!template) {
+      lastTemplateKey.current = null
       setLines([])
       return
     }
-    if (linesRef.current.length === 0) {
-      setLines(
-        template.boxes.map((b) => ({
-          id: b.id,
-          text: '',
-          x: b.x,
-          y: b.y,
-          w: b.w,
-          fontSize: b.fontSize,
-          color: b.color,
-          stroke: b.stroke,
-          font: b.font,
-          align: b.align,
-          rotation: b.rotation,
-        })),
-      )
+    const changed = lastTemplateKey.current !== null && lastTemplateKey.current !== templateKey
+    lastTemplateKey.current = templateKey
+    if (isSubmitted) return
+
+    const hasText = linesRef.current.some((l) => l.text.trim() !== '')
+    if (changed) {
+      if (!hasText) setLines(templateStartLines(template))
+      return
     }
-  }, [template])
+    if (linesRef.current.length === 0) setLines(templateStartLines(template))
+  }, [template, templateKey, isSubmitted])
+
+  // Resume after a refresh/reconnect: restore exactly what was submitted.
+  useEffect(() => {
+    if (!isSubmitted || !submissionLines) return
+    setLines(submissionLines.map(clampFreeformLine))
+  }, [isSubmitted, submissionLines, templateKey])
+
+  // A new template arrived (reroll) -> the button may be used again.
+  useEffect(() => {
+    setRerollPending(false)
+  }, [templateKey, rerollsLeft])
+
+  // Safety valve: if the server rejects a reroll (e.g. no rerolls left),
+  // don't leave the button disabled forever.
+  useEffect(() => {
+    if (!rerollPending) return
+    const timer = window.setTimeout(() => setRerollPending(false), 6000)
+    return () => window.clearTimeout(timer)
+  }, [rerollPending])
 
   if (!template) {
     return (
@@ -66,9 +117,16 @@ export default function CaptionView({ template, round, totalRounds, rerollsLeft,
   const hasText = lines.some((l) => l.text.trim() !== '')
 
   const submit = () => {
-    if (submitted) return
-    onSubmit({ texts: {}, lines })
-    setSubmitted(true)
+    if (isSubmitted || rerollPending || !hasText) return
+    const cleaned = lines.filter((l) => l.text.trim() !== '').map(clampFreeformLine)
+    onSubmit({ texts: {}, lines: cleaned })
+    setLocalSubmitted(true)
+  }
+
+  const reroll = () => {
+    if (isSubmitted || rerollPending || rerollsLeft <= 0) return
+    setRerollPending(true)
+    onReroll()
   }
 
   return (
@@ -84,33 +142,42 @@ export default function CaptionView({ template, round, totalRounds, rerollsLeft,
             </span>
           )}
           <button
-            className="rounded-full border border-sky/60 px-3 py-1.5 text-sm font-bold text-sky transition hover:bg-sky/10 disabled:cursor-default disabled:opacity-40"
-            disabled={submitted || rerollsLeft <= 0}
-            title={rerollsLeft > 0 ? 'Trade this template for a different one' : 'No rerolls left this round'}
-            onClick={onReroll}
+            className="min-h-11 rounded-full border border-sky/60 px-4 py-2 text-sm font-bold text-sky transition hover:bg-sky/10 disabled:cursor-default disabled:opacity-40"
+            disabled={isSubmitted || rerollPending || rerollsLeft <= 0}
+            aria-busy={rerollPending}
+            title={
+              isSubmitted
+                ? 'Already submitted'
+                : rerollPending
+                  ? 'Loading a new template…'
+                  : rerollsLeft > 0
+                    ? 'Trade this template for a different one'
+                    : 'No rerolls left this round'
+            }
+            onClick={reroll}
           >
-            🔄 Template <span className="text-xs">({rerollsLeft})</span>
+            {rerollPending ? '⏳ …' : '🔄 Template'} <span className="text-xs">({rerollsLeft})</span>
           </button>
         </div>
       </header>
 
       <div className="rounded-2xl border border-line bg-card p-3 shadow-xl sm:p-4">
-        <FreeformEditor template={template} lines={lines} setLines={setLines} disabled={submitted} />
+        {isSubmitted && (
+          <div className="mb-3 rounded-xl border border-mint/50 bg-mint/10 px-4 py-3 text-center font-semibold text-mint">
+            ✅ Submitted — waiting for the others…
+          </div>
+        )}
+
+        <FreeformEditor template={template} lines={lines} setLines={setLines} disabled={isSubmitted} />
 
         <div className="mt-4 border-t border-line pt-4">
-          {submitted ? (
-            <div className="rounded-xl border border-mint/50 bg-mint/10 px-4 py-3 text-center font-semibold text-mint">
-              ✅ Submitted — waiting for the others…
-            </div>
-          ) : (
-            <button
-              className="w-full rounded-xl bg-gradient-to-r from-punch to-punch2 py-3 text-lg font-extrabold uppercase tracking-wide text-night shadow-lg transition hover:brightness-110 active:translate-y-px disabled:cursor-default disabled:opacity-40"
-              disabled={!hasText}
-              onClick={submit}
-            >
-              {hasText ? 'Send meme 🚀' : 'Write at least one text…'}
-            </button>
-          )}
+          <button
+            className="w-full rounded-xl bg-gradient-to-r from-punch to-punch2 py-3 text-lg font-extrabold uppercase tracking-wide text-night shadow-lg transition hover:brightness-110 active:translate-y-px disabled:cursor-default disabled:opacity-40"
+            disabled={isSubmitted || rerollPending || !hasText}
+            onClick={submit}
+          >
+            {isSubmitted ? 'Submitted ✓' : rerollPending ? 'Loading new template…' : hasText ? 'Send meme 🚀' : 'Write at least one text…'}
+          </button>
         </div>
       </div>
     </section>

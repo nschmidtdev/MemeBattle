@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  NEXT_TELEMETRY_DISABLED: '1'
+
+jobs:
+  checks:
+    name: Type-check, unit tests, lint, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # Dummy URL: the checks job never talks to a database, but the Prisma
+      # client and `next build` validate that DATABASE_URL is set.
+      DATABASE_URL: postgresql://meme:secret@localhost:5432/meme_battle?schema=public
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Type-check
+        run: npx tsc --noEmit
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npx next build
+
+  e2e:
+    name: End-to-end smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DATABASE_URL: postgresql://meme:secret@localhost:5432/meme_battle?schema=public
+      ADMIN_EMAIL: admin@localhost
+      ADMIN_PASSWORD: ci-admin-password
+      PORT: '3100'
+      BASE_URL: http://localhost:3100
+      UPLOAD_DIR: ./data/uploads
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: meme
+          POSTGRES_PASSWORD: secret
+          POSTGRES_DB: meme_battle
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U meme -d meme_battle"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply database migrations
+        run: npm run db:migrate
+
+      - name: Seed database
+        run: npm run db:seed
+
+      - name: Build
+        run: npm run build
+
+      - name: Start server
+        run: |
+          nohup npm start > server.log 2>&1 &
+          echo $! > server.pid
+
+      - name: Wait for the server to become healthy
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS "$BASE_URL/api/health" > /dev/null; then
+              echo "Server is healthy after $((i * 2))s"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Server did not become healthy within 120s"
+          tail -n 200 server.log
+          exit 1
+
+      - name: E2E smoke test
+        run: npm run test:e2e
+
+      - name: Show server log on failure
+        if: failure()
+        run: tail -n 200 server.log || true

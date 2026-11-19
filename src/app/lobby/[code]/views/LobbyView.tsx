@@ -1,15 +1,8 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { LobbyState } from '@/lib/client'
-
-interface PackOption {
-  id: string
-  name: string
-  description: string | null
-  isPublic: boolean
-  templateCount: number
-}
+import type { PackOption } from '@/lib/types'
 
 interface Props {
   state: LobbyState
@@ -17,30 +10,78 @@ interface Props {
   onSettings: (patch: Partial<LobbyState['settings']>) => void
   onStart: () => void
   onKick: (playerId: string) => void
+  /** Latest server error — releases the start button if starting failed. */
+  error?: string | null
+  /** Increments on every server error, even when the message repeats. */
+  errorNonce?: number
 }
 
-export default function LobbyView({ state, myId, onSettings, onStart, onKick }: Props) {
+export default function LobbyView({ state, myId, onSettings, onStart, onKick, error, errorNonce }: Props) {
   const isHost = state.players.find((p) => p.id === myId)?.isHost ?? false
   const [lobbyName, setLobbyName] = useState(state.settings.lobbyName)
   const [rounds, setRounds] = useState(state.settings.rounds)
   const [captionTime, setCaptionTime] = useState(state.settings.captionTime)
   const [voteTime, setVoteTime] = useState(state.settings.voteTime)
   const [packs, setPacks] = useState<PackOption[] | null>(null)
+  const [packsError, setPacksError] = useState<string | null>(null)
+  const [startPending, setStartPending] = useState(false)
+  const nameFocused = useRef(false)
+  const aliveRef = useRef(true)
 
-  // keep local inputs in sync when the server state changes (e.g. play again)
+  // keep numeric inputs in sync when the server state changes (e.g. play again)
   useEffect(() => {
-    setLobbyName(state.settings.lobbyName)
     setRounds(state.settings.rounds)
     setCaptionTime(state.settings.captionTime)
     setVoteTime(state.settings.voteTime)
   }, [state.settings])
 
+  // Don't clobber the lobby name while the host is typing: every settings echo
+  // comes back as a new server state.
   useEffect(() => {
+    if (!nameFocused.current) setLobbyName(state.settings.lobbyName)
+  }, [state.settings.lobbyName])
+
+  const loadPacks = useCallback(() => {
+    setPacks(null)
+    setPacksError(null)
     fetch('/api/packs/public')
-      .then((r) => (r.ok ? r.json() : { packs: [] }))
-      .then((d: { packs?: PackOption[] }) => setPacks(d.packs ?? []))
-      .catch(() => setPacks([]))
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.json() as Promise<{ packs?: PackOption[] }>
+      })
+      .then((d) => {
+        if (aliveRef.current) setPacks(d.packs ?? [])
+      })
+      .catch(() => {
+        if (!aliveRef.current) return
+        setPacks(null)
+        setPacksError('Could not load template packs.')
+      })
   }, [])
+
+  useEffect(() => {
+    aliveRef.current = true
+    loadPacks()
+    return () => {
+      aliveRef.current = false
+    }
+  }, [loadPacks])
+
+  // A start request that failed (or a slow server) must not leave the button
+  // disabled forever; a phase change unmounts this view anyway.
+  useEffect(() => {
+    if (errorNonce !== undefined && errorNonce > 0) setStartPending(false)
+  }, [errorNonce])
+
+  useEffect(() => {
+    if (error) setStartPending(false)
+  }, [error])
+
+  useEffect(() => {
+    if (!startPending) return
+    const id = setTimeout(() => setStartPending(false), 8000)
+    return () => clearTimeout(id)
+  }, [startPending])
 
   const togglePack = (id: string) => {
     if (!isHost) return
@@ -50,13 +91,20 @@ export default function LobbyView({ state, myId, onSettings, onStart, onKick }: 
     onSettings({ packIds: next })
   }
 
-  const canStart = isHost && state.players.length >= 2 && state.settings.packIds.length > 0
+  const connectedCount = state.players.filter((p) => p.connected).length
+  const canStart = isHost && connectedCount >= 2 && state.settings.packIds.length > 0 && !startPending
   const startHint =
-    state.players.length < 2
-      ? `Waiting for players (${state.players.length}/2 minimum)…`
+    connectedCount < 2
+      ? `Waiting for connected players (${connectedCount}/2 minimum)…`
       : state.settings.packIds.length === 0
         ? 'Pick at least one template pack…'
         : null
+
+  const start = () => {
+    if (!canStart) return
+    setStartPending(true)
+    onStart()
+  }
 
   const sliderCls = 'w-full accent-punch'
 
@@ -119,8 +167,12 @@ export default function LobbyView({ state, myId, onSettings, onStart, onKick }: 
               value={lobbyName}
               maxLength={24}
               disabled={!isHost}
+              onFocus={() => { nameFocused.current = true }}
               onChange={(e) => setLobbyName(e.target.value)}
-              onBlur={() => lobbyName.trim() && onSettings({ lobbyName: lobbyName.trim() })}
+              onBlur={() => {
+                nameFocused.current = false
+                if (lobbyName.trim()) onSettings({ lobbyName: lobbyName.trim() })
+              }}
             />
           </label>
 
@@ -153,6 +205,15 @@ export default function LobbyView({ state, myId, onSettings, onStart, onKick }: 
               Template packs <span className="text-sun">{state.settings.packIds.length} selected</span>
             </span>
             <div className="flex flex-wrap gap-2">
+              {packs === null && !packsError && (
+                <p className="animate-pulse text-sm text-dim">Loading template packs…</p>
+              )}
+              {packsError && (
+                <p className="flex items-center gap-2 text-sm text-rose">
+                  {packsError}
+                  <button className="underline hover:text-ink" onClick={loadPacks}>Retry</button>
+                </p>
+              )}
               {(packs ?? []).map((p) => {
                 const on = state.settings.packIds.includes(p.id)
                 return (
@@ -184,9 +245,9 @@ export default function LobbyView({ state, myId, onSettings, onStart, onKick }: 
             <button
               className="w-full rounded-xl bg-gradient-to-r from-punch to-punch2 py-3 text-lg font-extrabold uppercase tracking-wide text-night shadow-lg transition hover:brightness-110 active:translate-y-px disabled:cursor-default disabled:opacity-40 disabled:hover:brightness-100"
               disabled={!canStart}
-              onClick={onStart}
+              onClick={start}
             >
-              ▶ Start game
+              {startPending ? 'Starting…' : '▶ Start game'}
             </button>
           ) : (
             <p className="text-center text-sm text-dim">Waiting for the host to start…</p>

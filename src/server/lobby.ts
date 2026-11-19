@@ -3,14 +3,26 @@ import type {
   CaptionSubmission,
   FinalMeme,
   FreeformLine,
+  GameOverPayload,
   LobbySettings,
   MemeEntry,
   Phase,
+  PlayerInfo,
+  RankingEntry,
+  RoundResult,
   TemplateData,
   VoteTally,
   VoteValue,
 } from '../lib/types'
-import { Events } from '../lib/types'
+import {
+  Events,
+  LINE_BOUNDS,
+  MAX_LINES,
+  MAX_REROLLS,
+  MAX_TEXT_LEN,
+  ROTATION_BOUNDS,
+  TEXT_WIDTH_BOUNDS,
+} from '../lib/types'
 import { computeScore } from '../lib/scoring'
 import { loadTemplates } from './templates'
 
@@ -18,8 +30,10 @@ export const MAX_PLAYERS = 30
 export const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 /** Ghosted players (disconnected) are kept this long so a brief reconnect or page navigation can resume them. */
 export const GHOST_TTL_MS = 30_000
-/** Template rerolls per player and round (caption phase). */
-export const MAX_REROLLS = 3
+/** Maximum number of template packs a lobby may select. */
+const MAX_PACK_IDS = 10
+/** Longest allowed lobby name, after whitespace normalization. */
+const MAX_LOBBY_NAME_LEN = 24
 
 const AVATARS = ['🐶', '🐱', '🦊', '🐸', '🐵', '🦄', '🐼', '🦁', '🐷', '🐙', '🦖', '🐔', '🐺', '🦉', '🐯', '🐢', '🦜', '🐭', '🦈', '🐉']
 const COLORS = ['#f44336', '#e91e63', '#9c27b0', '#673ab7', '#3f51b5', '#2196f3', '#03a9f4', '#00bcd4', '#009688', '#4caf50', '#8bc34a', '#ff9800', '#ff5722', '#795548', '#607d8b', '#ffeb3b', '#00e5ff', '#ff4081', '#76ff03', '#ffd740']
@@ -39,6 +53,8 @@ export interface PlayerState {
   template: TemplateData | null
   /** Rerolls used this round. */
   rerolls: number
+  /** Rounds in which this player submitted a meme; final tie-breaker. */
+  submittedRounds: number
   totalScore: number
   roundScores: number[]
 }
@@ -57,6 +73,41 @@ export function generateCode(): string {
 export function sanitizeUsername(raw: unknown): string {
   const s = typeof raw === 'string' ? raw.trim().replace(/\s+/g, ' ') : ''
   return (s.slice(0, 16) || 'Player').trim()
+}
+
+/** Trim and collapse whitespace, then cap the length. Returns '' when nothing remains. */
+function collapseLobbyName(raw: unknown): string {
+  const s = typeof raw === 'string' ? raw.trim().replace(/\s+/g, ' ') : ''
+  return s.slice(0, MAX_LOBBY_NAME_LEN).trim()
+}
+
+export function sanitizeLobbyName(raw: unknown): string {
+  return collapseLobbyName(raw) || 'Meme Lobby'
+}
+
+function normalizePackIds(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  const ids: string[] = []
+  for (const value of raw) {
+    if (typeof value !== 'string') continue
+    const id = value.trim()
+    if (!id || ids.includes(id)) continue
+    ids.push(id)
+    if (ids.length >= MAX_PACK_IDS) break
+  }
+  return ids
+}
+
+/** Validate arbitrary client input into safe lobby settings, applying defaults for missing fields. */
+export function normalizeSettings(input: unknown): LobbySettings {
+  const raw = typeof input === 'object' && input !== null ? (input as Record<string, unknown>) : {}
+  return {
+    rounds: clampInt(raw.rounds, 1, 10, 3),
+    captionTime: clampInt(raw.captionTime, 5, 120, 45),
+    voteTime: clampInt(raw.voteTime, 3, 60, 10),
+    packIds: normalizePackIds(raw.packIds),
+    lobbyName: sanitizeLobbyName(raw.lobbyName),
+  }
 }
 
 function shuffle<T>(arr: T[]): T[] {
@@ -82,6 +133,8 @@ export class Lobby {
 
   private hooks: LobbyHooks
   private timers: NodeJS.Timeout[] = []
+  /** Guards start() against concurrent calls while templates are loading. */
+  private starting = false
 
   // game state
   totalRounds = 0
@@ -92,16 +145,18 @@ export class Lobby {
   currentMeme = 0
   captionEndsAt = 0
   memeSwitchAt = 0
-  lastRoundResult: unknown = null
-  ranking: unknown = null
+  lastRoundResult: RoundResult | null = null
+  ranking: RankingEntry[] | null = null
   /** All scored memes of the game, for the final gallery. */
   finalMemes: FinalMeme[] = []
 
   constructor(code: string, name: string, isPublic: boolean, settings: LobbySettings, hooks: LobbyHooks) {
     this.code = code
-    this.name = name
     this.isPublic = isPublic
-    this.settings = clone(settings)
+    const raw = typeof settings === 'object' && settings !== null ? settings : ({} as LobbySettings)
+    // Settings are authoritative; the legacy name argument only fills a missing name.
+    this.settings = normalizeSettings({ ...raw, lobbyName: collapseLobbyName(raw.lobbyName) || name })
+    this.name = this.settings.lobbyName
     this.hooks = hooks
   }
 
@@ -121,7 +176,11 @@ export class Lobby {
     return undefined
   }
 
-  playerInfos() {
+  playerSocketId(playerId: string): string | null {
+    return this.players.get(playerId)?.socketId ?? null
+  }
+
+  playerInfos(): PlayerInfo[] {
     return [...this.players.values()].map((p) => ({
       id: p.id,
       username: p.username,
@@ -154,10 +213,6 @@ export class Lobby {
     return n
   }
 
-  isEmpty(): boolean {
-    return this.players.size === 0
-  }
-
   /**
    * Knowing the lobby code plus a playerId rebinds that player to the new socket.
    * That is a deliberate trade-off for guest party play (no accounts): codes are
@@ -174,11 +229,19 @@ export class Lobby {
       player = [...this.players.values()].find((p) => p.username.toLowerCase() === uname.toLowerCase())
     }
     if (player) {
-      player.username = uname
-      player.socketId = socketId
-      player.connected = true
-      player.disconnectedAt = null
-      return { player }
+      const bound = player
+      // Keep the existing name if another seat already uses the requested one.
+      const nameTaken = [...this.players.values()].some(
+        (other) => other.id !== bound.id && other.username.toLowerCase() === uname.toLowerCase(),
+      )
+      if (!nameTaken) bound.username = uname
+      bound.socketId = socketId
+      bound.connected = true
+      bound.disconnectedAt = null
+      // A ghost host (solo host who navigated away) hands the role back on rebind.
+      const currentHost = this.host()
+      if (currentHost && !currentHost.connected && bound.connected) this.transferHost()
+      return { player: bound }
     }
     if (this.phase !== 'lobby') return { error: 'The game is already in progress.' }
     if (this.players.size >= MAX_PLAYERS) return { error: 'Lobby is full.' }
@@ -206,6 +269,7 @@ export class Lobby {
       votes: {},
       template: null,
       rerolls: 0,
+      submittedRounds: 0,
       totalScore: 0,
       roundScores: [],
     }
@@ -258,12 +322,14 @@ export class Lobby {
   }
 
   /**
-   * Removes ghosted players that have been gone for GHOST_TTL_MS. Only active in the
-   * lobby/gameOver phases; mid-game ghosts persist until the game ends.
+   * Removes ghosted players that have been gone for GHOST_TTL_MS. Runs in the
+   * lobby/gameOver phases; mid-game it only cleans up once nobody is connected,
+   * so a dead game does not linger forever.
    * Returns true when the lobby is now empty (caller should drop it).
    */
   sweep(now: number): boolean {
-    if (this.phase !== 'lobby' && this.phase !== 'gameOver') return false
+    const inGame = this.phase !== 'lobby' && this.phase !== 'gameOver'
+    if (inGame && this.playerCount() > 0) return false
     for (const p of [...this.players.values()]) {
       if (!p.connected && p.disconnectedAt !== null && now - p.disconnectedAt >= GHOST_TTL_MS) {
         this.removePlayer(p.id)
@@ -305,14 +371,19 @@ export class Lobby {
     const p = this.playerBySocket(socketId)
     if (!p?.isHost) return 'Only the host can change settings.'
     if (this.phase !== 'lobby') return 'Settings are locked during the game.'
-    const s = { ...this.settings }
-    if (settings.lobbyName !== undefined) s.lobbyName = sanitizeUsername(settings.lobbyName + ' ') || this.settings.lobbyName
-    if (settings.rounds !== undefined) s.rounds = clampInt(settings.rounds, 1, 10)
-    if (settings.captionTime !== undefined) s.captionTime = clampInt(settings.captionTime, 5, 120)
-    if (settings.voteTime !== undefined) s.voteTime = clampInt(settings.voteTime, 3, 60)
-    if (Array.isArray(settings.packIds)) s.packIds = settings.packIds.filter((x): x is string => typeof x === 'string').slice(0, 10)
-    this.settings = s
-    this.name = s.lobbyName
+    const input: Record<string, unknown> = {}
+    if (typeof settings === 'object' && settings !== null) {
+      for (const [key, value] of Object.entries(settings)) {
+        if (value !== undefined) input[key] = value
+      }
+    }
+    const merged: Record<string, unknown> = { ...this.settings, ...input }
+    // An empty lobby name keeps the current one instead of falling back to a default.
+    if ('lobbyName' in input && !collapseLobbyName(input.lobbyName)) {
+      merged.lobbyName = this.settings.lobbyName
+    }
+    this.settings = normalizeSettings(merged)
+    this.name = this.settings.lobbyName
     this.hooks.broadcast(Events.LobbyUpdate, this.fullLobbyUpdate())
     return null
   }
@@ -323,21 +394,33 @@ export class Lobby {
     const p = this.playerBySocket(socketId)
     if (!p?.isHost) return 'Only the host can start the game.'
     if (this.phase !== 'lobby') return 'The game already started.'
-    if (this.players.size < 2) return 'You need at least 2 players to start.'
+    if (this.starting) return 'The game is already starting.'
+    if (this.playerCount() < 2) return 'You need at least 2 players to start.'
     if (this.settings.packIds.length === 0) return 'Select at least one template pack.'
 
-    const templates = await loadTemplates(this.settings.packIds)
-    if (templates.length === 0) return 'No active templates found in the selected packs.'
+    this.starting = true
+    try {
+      const templates = await loadTemplates(this.settings.packIds)
+      // Loading is async: only continue if the lobby is still waiting and the caller
+      // is still a connected host (by player id, so a nav rebind does not cancel it).
+      const host = this.players.get(p.id)
+      if (this.phase !== 'lobby' || !host?.isHost || !host.connected) return null
+      if (this.playerCount() < 2) return 'You need at least 2 connected players to start.'
+      if (templates.length === 0) return 'No active templates found in the selected packs.'
 
-    this.templates = shuffle(templates)
-    this.totalRounds = this.settings.rounds
-    this.finalMemes = []
-    this.players.forEach((pl) => {
-      pl.totalScore = 0
-      pl.roundScores = []
-    })
-    this.beginRound(1)
-    return null
+      this.templates = shuffle(templates)
+      this.totalRounds = this.settings.rounds
+      this.finalMemes = []
+      this.players.forEach((pl) => {
+        pl.totalScore = 0
+        pl.roundScores = []
+        pl.submittedRounds = 0
+      })
+      this.beginRound(1)
+      return null
+    } finally {
+      this.starting = false
+    }
   }
 
   /** Change phase and broadcast the full lobby state so clients switch views. */
@@ -348,6 +431,8 @@ export class Lobby {
 
   private beginRound(round: number) {
     this.round = round
+    // Reshuffle every round so players do not get the same template each time.
+    this.templates = shuffle(this.templates)
     this.players.forEach((pl) => {
       pl.submission = null
       pl.votes = {}
@@ -367,12 +452,16 @@ export class Lobby {
       if (pl.socketId) {
         this.hooks.sendTo(pl.socketId, Events.CaptionTemplate, {
           template,
-          rerollsLeft: MAX_REROLLS,
+          rerollsLeft: this.templates.length > 1 ? MAX_REROLLS : 0,
           timeLeft: this.settings.captionTime,
         })
       }
     })
-    this.schedule(() => this.beginVoting(), this.settings.captionTime * 1000)
+    const roundNumber = round
+    this.schedule(() => {
+      if (this.round !== roundNumber) return
+      this.beginVoting()
+    }, this.settings.captionTime * 1000)
   }
 
   /** Trade the current template for a different random one (limited per round). */
@@ -405,7 +494,11 @@ export class Lobby {
 
   private beginVoting() {
     if (this.phase !== 'caption') return // idempotent: early-exit and full-timeout can both fire
+    this.clearTimers() // kill the caption timeout when everyone submitted early
     const submitters = shuffle([...this.players.values()].filter((pl) => pl.submission))
+    submitters.forEach((pl) => {
+      pl.submittedRounds++
+    })
     this.memes = submitters.map((pl) => ({
       playerId: pl.id,
       username: pl.username,
@@ -457,45 +550,51 @@ export class Lobby {
 
   private endVoting() {
     this.clearTimers()
-    const result = {
+    const scored = this.memes.map((meme, index) => {
+      const votes = this.tallies.get(index) ?? { up: 0, down: 0, meh: 0 }
+      return { meme, index, votes, score: computeScore(votes) }
+    })
+    const players: RoundResult['players'] = {}
+    for (const pl of this.players.values()) {
+      players[pl.id] = { username: pl.username, avatar: pl.avatar, color: pl.color }
+    }
+    const result: RoundResult = {
       round: this.round,
-      memes: this.memes.map((m, i) => {
-        const t = this.tallies.get(i) ?? { up: 0, down: 0, meh: 0 }
-        return {
-          index: i,
-          playerId: m.playerId,
-          username: m.username,
-          score: computeScore(t),
-          up: t.up,
-          down: t.down,
-          meh: t.meh,
-        }
-      }),
+      memes: scored.map(({ meme, index, votes, score }) => ({
+        index,
+        playerId: meme.playerId,
+        username: meme.username,
+        score,
+        up: votes.up,
+        down: votes.down,
+        meh: votes.meh,
+        rank: 1 + scored.filter((entry) => entry.score > score).length,
+      })),
       totals: {},
-    } as { round: number; memes: Array<Record<string, unknown>>; totals: Record<string, number> }
+      players,
+    }
     for (const pl of this.players.values()) {
       const entry = result.memes.find((m) => m.playerId === pl.id)
-      const score = entry ? (entry.score as number) : 0
+      const score = entry ? entry.score : 0
       pl.totalScore += score
       pl.roundScores.push(score)
-      ;(result.totals as Record<string, number>)[pl.id] = pl.totalScore
+      result.totals[pl.id] = pl.totalScore
     }
 
-    // collect the round's memes (scored) for the final gallery; boxes are dropped
-    // because freeform lines carry all placement info
-    this.memes.forEach((m, i) => {
-      const t = this.tallies.get(i) ?? { up: 0, down: 0, meh: 0 }
+    // collect the round's memes (scored) for the final gallery; keep the boxes so
+    // legacy fixed-template texts still render in the gallery and downloads
+    for (const { meme, score } of scored) {
       this.finalMemes.push({
-        playerId: m.playerId,
-        username: m.username,
-        avatar: m.avatar,
-        color: m.color,
-        template: { ...m.template, boxes: [] },
-        submission: clone(m.submission),
-        score: computeScore(t),
+        playerId: meme.playerId,
+        username: meme.username,
+        avatar: meme.avatar,
+        color: meme.color,
+        template: meme.template,
+        submission: clone(meme.submission),
+        score,
         round: this.round,
       })
-    })
+    }
 
     this.lastRoundResult = result
     this.setPhase('roundResults')
@@ -509,7 +608,7 @@ export class Lobby {
   }
 
   private gameOver() {
-    const ranking = [...this.players.values()]
+    const sorted = [...this.players.values()]
       .map((pl) => ({
         playerId: pl.id,
         username: pl.username,
@@ -517,11 +616,29 @@ export class Lobby {
         color: pl.color,
         total: pl.totalScore,
         rounds: pl.roundScores,
+        submittedRounds: pl.submittedRounds,
       }))
-      .sort((a, b) => b.total - a.total)
+      .sort((a, b) => b.total - a.total || b.submittedRounds - a.submittedRounds)
+    const ranking: RankingEntry[] = sorted.map((entry) => ({
+      playerId: entry.playerId,
+      username: entry.username,
+      avatar: entry.avatar,
+      color: entry.color,
+      total: entry.total,
+      rounds: entry.rounds,
+      // Competition ranking; ties need the same score AND submission count.
+      rank:
+        1 +
+        sorted.filter(
+          (other) =>
+            other.total > entry.total ||
+            (other.total === entry.total && other.submittedRounds > entry.submittedRounds),
+        ).length,
+    }))
     this.ranking = ranking
     this.setPhase('gameOver')
-    this.hooks.broadcast(Events.GameOver, { ranking, totalRounds: this.totalRounds, memes: this.finalMemes })
+    const payload: GameOverPayload = { ranking, totalRounds: this.totalRounds, memes: this.finalMemes }
+    this.hooks.broadcast(Events.GameOver, payload)
   }
 
   playAgain(socketId: string): string | null {
@@ -536,6 +653,7 @@ export class Lobby {
     this.players.forEach((pl) => {
       pl.submission = null
       pl.votes = {}
+      pl.submittedRounds = 0
       pl.totalScore = 0
       pl.roundScores = []
     })
@@ -553,26 +671,29 @@ export class Lobby {
 
     const texts: Record<string, string> = {}
     const raw = typeof submission?.texts === 'object' && submission.texts ? submission.texts : {}
+    let textCount = 0
     for (const [k, v] of Object.entries(raw)) {
-      if (typeof v === 'string') texts[k.slice(0, 64)] = v.slice(0, 240)
+      if (typeof v !== 'string') continue
+      if (textCount++ >= MAX_LINES) break
+      texts[k.slice(0, 64)] = v.slice(0, MAX_TEXT_LEN)
     }
     let lines: FreeformLine[] = []
     if (Array.isArray(submission?.lines)) {
       lines = submission.lines
         .filter((b) => b && typeof b === 'object' && typeof b.text === 'string')
-        .slice(0, 12)
+        .slice(0, MAX_LINES)
         .map((b) => ({
           id: String(b.id ?? '').slice(0, 32) || crypto.randomUUID(),
-          text: String(b.text).slice(0, 120),
-          x: clampNum(b.x, 0.05, 0.95),
-          y: clampNum(b.y, 0.02, 0.98),
-          w: clampNum(b.w, 0.1, 1),
-          fontSize: clampNum(b.fontSize, 0.02, 0.25),
+          text: String(b.text).slice(0, MAX_TEXT_LEN),
+          x: clampNum(b.x, LINE_BOUNDS.xMin, LINE_BOUNDS.xMax),
+          y: clampNum(b.y, LINE_BOUNDS.yMin, LINE_BOUNDS.yMax),
+          w: clampNum(b.w, TEXT_WIDTH_BOUNDS.min, TEXT_WIDTH_BOUNDS.max),
+          fontSize: clampNum(b.fontSize, LINE_BOUNDS.fontSizeMin, LINE_BOUNDS.fontSizeMax),
           color: typeof b.color === 'string' ? b.color.slice(0, 20) : '#ffffff',
           stroke: typeof b.stroke === 'string' ? b.stroke.slice(0, 20) : '#000000',
           font: typeof b.font === 'string' ? b.font.slice(0, 40) : 'Impact',
           align: b.align === 'left' || b.align === 'right' ? b.align : 'center',
-          rotation: clampNum(b.rotation, -90, 90),
+          rotation: clampNum(b.rotation, ROTATION_BOUNDS.min, ROTATION_BOUNDS.max),
         }))
     }
     const hasAny =
@@ -590,6 +711,7 @@ export class Lobby {
     const p = this.playerBySocket(socketId)
     if (!p) return 'Unknown player.'
     if (this.phase !== 'voting') return 'Not in the voting phase.'
+    if (!p.submission) return 'You did not submit a meme this round.'
     if (index < 0 || index >= this.memes.length) return 'Unknown meme.'
     if (value !== 'up' && value !== 'down' && value !== 'meh') return 'Invalid vote.'
     if (index !== this.currentMeme) return 'This meme is not up for voting.'
@@ -612,17 +734,14 @@ export class Lobby {
 
   resume(socketId: string, playerId: string | null): string | null {
     const p = this.playerBySocket(socketId)
-    if (!p) {
-      const found = playerId
-        ? this.players.get(playerId)
-        : [...this.players.values()].find((pl) => !pl.connected)
-      if (!found) return 'You are not in this lobby.'
-      found.socketId = socketId
-      found.connected = true
-      found.disconnectedAt = null
-      return this.sendResume(socketId, found.id)
-    }
-    return this.sendResume(socketId, p.id)
+    if (p) return this.sendResume(socketId, p.id)
+    if (!playerId) return 'You are not in this lobby.'
+    const found = this.players.get(playerId)
+    if (!found) return 'You are not in this lobby.'
+    found.socketId = socketId
+    found.connected = true
+    found.disconnectedAt = null
+    return this.sendResume(socketId, found.id)
   }
 
   private sendResume(socketId: string, playerId: string): string | null {
@@ -633,21 +752,34 @@ export class Lobby {
       const template = pl?.template ?? null
       send(Events.CaptionTemplate, {
         template,
-        rerollsLeft: Math.max(0, MAX_REROLLS - (pl?.rerolls ?? 0)),
+        rerollsLeft:
+          this.templates.length > 1 ? Math.max(0, MAX_REROLLS - (pl?.rerolls ?? 0)) : 0,
         timeLeft: Math.max(0, Math.ceil((this.captionEndsAt - Date.now()) / 1000)),
+        round: this.round,
+        totalRounds: this.totalRounds,
+        submitted: !!pl?.submission,
+        submission: pl?.submission ? clone(pl.submission) : null,
       })
     } else if (this.phase === 'voting') {
+      const pl = this.players.get(playerId)
       send(Events.PhaseVoting, {
         round: this.round,
         memes: this.memes,
         count: this.memes.length,
         current: this.currentMeme,
         timeLeft: Math.max(0, Math.ceil((this.memeSwitchAt - Date.now()) / 1000)),
+        // Only the resuming socket gets its own votes back; tallies stay secret.
+        votes: pl?.votes ?? {},
       })
     } else if (this.phase === 'roundResults' && this.lastRoundResult) {
       send(Events.RoundResults, this.lastRoundResult)
     } else if (this.phase === 'gameOver' && this.ranking) {
-      send(Events.GameOver, { ranking: this.ranking, totalRounds: this.totalRounds, memes: this.finalMemes })
+      const payload: GameOverPayload = {
+        ranking: this.ranking,
+        totalRounds: this.totalRounds,
+        memes: this.finalMemes,
+      }
+      send(Events.GameOver, payload)
     }
     return null
   }
@@ -685,9 +817,14 @@ export class Lobby {
   }
 }
 
-function clampInt(v: unknown, min: number, max: number): number {
-  const n = typeof v === 'number' ? Math.floor(v) : Number(v)
-  if (!Number.isFinite(n)) return min
+function clampInt(v: unknown, min: number, max: number, fallback = min): number {
+  const n =
+    typeof v === 'number'
+      ? Math.floor(v)
+      : typeof v === 'string' && v.trim() !== ''
+        ? Math.floor(Number(v))
+        : Number.NaN
+  if (!Number.isFinite(n)) return fallback
   return Math.min(max, Math.max(min, n))
 }
 

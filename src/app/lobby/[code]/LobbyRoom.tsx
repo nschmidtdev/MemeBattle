@@ -2,17 +2,24 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import type { CaptionSubmission, FinalMeme, RoundResult, TemplateData, VoteValue } from '@/lib/types'
-import { Events } from '@/lib/types'
+import type {
+  CaptionSubmission,
+  GameOverPayload,
+  MemeInfo,
+  RoundResult,
+  TemplateData,
+  VoteValue,
+} from '@/lib/types'
+import { Events, MAX_REROLLS } from '@/lib/types'
 import {
   clearIdentity,
   connectSocket,
   getSavedPlayerId,
   getSavedUsername,
+  randomId,
   savePlayerId,
   saveUsername,
   type LobbyState,
-  type MemeInfo,
 } from '@/lib/client'
 import { isMuted, setMuted, sounds } from '@/lib/sounds'
 import LobbyView from './views/LobbyView'
@@ -20,11 +27,31 @@ import CaptionView from './views/CaptionView'
 import VotingView from './views/VotingView'
 import ResultsView from './views/ResultsView'
 
-interface GameStateOver {
-  ranking: Array<{ playerId: string; username: string; avatar: string; color: string; total: number; rounds: number[] }>
+interface CaptionState {
+  template: TemplateData | null
+  round: number
   totalRounds: number
-  memes: FinalMeme[]
+  rerollsLeft: number
+  /** Server-confirmed submission, restored on reconnect. */
+  submitted: boolean
+  submission: CaptionSubmission | null
 }
+
+interface VotingState {
+  round: number
+  memes: MemeInfo[]
+  current: number
+  /** Votes this player already cast, restored on reconnect. */
+  votes: Record<number, VoteValue>
+}
+
+type CopyState = 'idle' | 'ok' | 'fail'
+
+/** Lobby is gone because the server restarted (lobbies only live in memory). */
+// Anchored on "Lobby" so unrelated "Player not found." errors don't wipe the room.
+const DEAD_LOBBY_RE = /^lobby\b.*not found|not in this lobby/i
+const DEAD_LOBBY_MESSAGE = 'Diese Lobby existiert nicht mehr — der Server wurde neu gestartet.'
+const HEADER_AVATARS = 8
 
 export default function LobbyRoom({ code }: { code: string }) {
   const router = useRouter()
@@ -33,20 +60,26 @@ export default function LobbyRoom({ code }: { code: string }) {
   const endsAtRef = useRef<number | null>(null)
   const lastTickRef = useRef<number>(Infinity)
   const myIdRef = useRef<string | null>(null)
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const errorNonceRef = useRef(0)
 
   const [state, setState] = useState<LobbyState | null>(null)
   const [myId, setMyId] = useState<string | null>(null)
-  const [joined, setJoined] = useState(false)
   const [online, setOnline] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [joinError, setJoinError] = useState<string | null>(null)
+  const [errorNonce, setErrorNonce] = useState(0)
   const [muted, setMutedState] = useState(false)
-  const [now, setNow] = useState(0)
+  /** Only used to re-render the countdown every tick; the value itself is never read. */
+  const [, setClock] = useState(0)
+  const [copyState, setCopyState] = useState<CopyState>('idle')
+  /** Vote rejections are surfaced to VotingView so it can roll back optimistic state. */
+  const [voteError, setVoteError] = useState<{ message: string; nonce: number } | null>(null)
 
-  const [caption, setCaption] = useState<{ template: TemplateData | null; round: number; totalRounds: number; rerollsLeft: number } | null>(null)
-  const [voting, setVoting] = useState<{ round: number; memes: MemeInfo[]; current: number } | null>(null)
+  const [caption, setCaption] = useState<CaptionState | null>(null)
+  const [voting, setVoting] = useState<VotingState | null>(null)
   const [roundResult, setRoundResult] = useState<RoundResult | null>(null)
-  const [gameOver, setGameOver] = useState<GameStateOver | null>(null)
+  const [gameOver, setGameOver] = useState<GameOverPayload | null>(null)
 
   const [nameInput, setNameInput] = useState<string | null>(null)
 
@@ -54,7 +87,7 @@ export default function LobbyRoom({ code }: { code: string }) {
   const tryRejoin = useCallback(() => {
     const username = getSavedUsername()
     if (!username) return
-    const pid = getSavedPlayerId() ?? crypto.randomUUID()
+    const pid = getSavedPlayerId() ?? randomId()
     savePlayerId(pid)
     setJoinError(null)
     socketRef.current?.emit(Events.Join, { username, playerId: pid, code: codeRef.current })
@@ -68,9 +101,28 @@ export default function LobbyRoom({ code }: { code: string }) {
 
     const socket = connectSocket((msg) => {
       setError(msg)
-      // While not joined yet, a server error is fatal for this page (e.g.
-      // lobby no longer exists) — surface it persistently, not just as a toast.
-      if (!myIdRef.current) setJoinError(msg)
+      setErrorNonce((n) => n + 1)
+      // Vote errors arrive after the optimistic UI update: let VotingView undo it.
+      if (/vote|voting|unknown meme/i.test(msg)) {
+        errorNonceRef.current += 1
+        setVoteError({ message: msg, nonce: errorNonceRef.current })
+      }
+      if (myIdRef.current && DEAD_LOBBY_RE.test(msg)) {
+        // Reconnect after a server restart: the lobby only ever lived in memory.
+        // Drop every bit of stale game state instead of showing a dead room.
+        myIdRef.current = null
+        setMyId(null)
+        setState(null)
+        setCaption(null)
+        setVoting(null)
+        setRoundResult(null)
+        setGameOver(null)
+        endsAtRef.current = null
+        setJoinError(DEAD_LOBBY_MESSAGE)
+      } else if (!myIdRef.current) {
+        // Before the first successful join a server error is fatal for this page.
+        setJoinError(msg)
+      }
       sounds.error()
     })
     socketRef.current = socket
@@ -79,18 +131,20 @@ export default function LobbyRoom({ code }: { code: string }) {
       savePlayerId(playerId)
       myIdRef.current = playerId
       setMyId(playerId)
-      setJoined(true)
       setJoinError(null)
+      setError(null)
       if (c !== codeRef.current) {
         codeRef.current = c
         router.replace(`/lobby/${c}`)
       }
     }
     const onState = (s: LobbyState) => setState(s)
+    const onEmpty = () => router.replace('/')
     const onKick = ({ playerId }: { playerId: string }) => {
       if (playerId === myIdRef.current) {
         clearIdentity()
-        setJoined(false)
+        myIdRef.current = null
+        setMyId(null)
         router.replace('/')
       }
     }
@@ -99,61 +153,115 @@ export default function LobbyRoom({ code }: { code: string }) {
       lastTickRef.current = Infinity
     }
 
-    socket.on(Events.LobbyJoined, onJoined)
-    socket.on(Events.LobbyUpdate, onState)
-    socket.on(Events.LobbyEmpty, () => router.replace('/'))
-    socket.on(Events.PlayerKick, onKick)
-    socket.on(Events.PhaseCaption, ({ round, totalRounds, timeLeft }: { round: number; totalRounds: number; timeLeft: number }) => {
-      setCaption({ template: null, round, totalRounds, rerollsLeft: 3 })
+    const onPhaseCaption = ({ round, totalRounds, timeLeft }: { round: number; totalRounds: number; timeLeft: number }) => {
+      setCaption({
+        template: null,
+        round,
+        totalRounds,
+        rerollsLeft: MAX_REROLLS,
+        submitted: false,
+        submission: null,
+      })
       setVoting(null)
       setRoundResult(null)
       setGameOver(null)
       startTimer(timeLeft)
       sounds.countdown()
-    })
-    socket.on(Events.CaptionTemplate, ({ template, timeLeft, rerollsLeft }: { template: TemplateData; timeLeft?: number; rerollsLeft?: number }) => {
+    }
+
+    const onCaptionTemplate = ({
+      template,
+      timeLeft,
+      rerollsLeft,
+      round,
+      totalRounds,
+      submitted,
+      submission,
+    }: {
+      template: TemplateData | null
+      timeLeft?: number
+      rerollsLeft?: number
+      round?: number
+      totalRounds?: number
+      submitted?: boolean
+      submission?: CaptionSubmission | null
+    }) => {
       setCaption((prev) => ({
         template,
-        round: prev?.round ?? 1,
-        totalRounds: prev?.totalRounds ?? 1,
+        round: round ?? prev?.round ?? 1,
+        totalRounds: totalRounds ?? prev?.totalRounds ?? 1,
         rerollsLeft: typeof rerollsLeft === 'number' ? rerollsLeft : (prev?.rerollsLeft ?? 0),
+        // Resume payloads carry the server-confirmed submission; rerolls omit it.
+        submitted: typeof submitted === 'boolean' ? submitted : (prev?.submitted ?? false),
+        submission: submission !== undefined ? submission : (prev?.submission ?? null),
       }))
       if (typeof timeLeft === 'number') startTimer(timeLeft)
-    })
-    socket.on(Events.PhaseVoting, ({ round, memes, current, timeLeft }: { round: number; memes: MemeInfo[]; current: number; timeLeft: number }) => {
-      setVoting({ round, memes, current })
+    }
+
+    const onPhaseVoting = ({
+      round,
+      memes,
+      current,
+      timeLeft,
+      votes,
+    }: {
+      round: number
+      memes: MemeInfo[]
+      current: number
+      timeLeft: number
+      votes?: Record<number, VoteValue>
+    }) => {
+      setVoting({ round, memes, current, votes: votes ?? {} })
       setCaption(null)
       setRoundResult(null)
       setGameOver(null)
+      setVoteError(null)
       startTimer(timeLeft)
-      sounds.memeShown()
-    })
-    socket.on(Events.VotingProgress, ({ index, timeLeft }: { index: number; timeLeft: number }) => {
+      // The following voting:progress(0) plays memeShown(); don't double it here.
+    }
+
+    const onVotingProgress = ({ index, timeLeft }: { index: number; timeLeft: number }) => {
       setVoting((prev) => (prev ? { ...prev, current: index } : prev))
       startTimer(timeLeft)
       sounds.memeShown()
-    })
-    socket.on(Events.RoundResults, (r: RoundResult) => {
+    }
+
+    const onRoundResults = (r: RoundResult) => {
       setRoundResult(r)
       setGameOver(null)
       sounds.results()
-    })
-    socket.on(Events.GameOver, ({ ranking, totalRounds, memes }: GameStateOver) => {
+    }
+
+    const onGameOver = ({ ranking, totalRounds, memes }: GameOverPayload) => {
       setGameOver({ ranking, totalRounds, memes })
       setRoundResult(null)
       sounds.win()
-    })
-    socket.on('connect', () => {
+    }
+
+    const onConnect = () => {
       setOnline(true)
       tryRejoin()
-    })
-    socket.on('disconnect', () => setOnline(false))
+    }
+    const onDisconnect = () => setOnline(false)
+
+    socket.on(Events.LobbyJoined, onJoined)
+    socket.on(Events.LobbyUpdate, onState)
+    socket.on(Events.LobbyEmpty, onEmpty)
+    socket.on(Events.PlayerKick, onKick)
+    socket.on(Events.PhaseCaption, onPhaseCaption)
+    socket.on(Events.CaptionTemplate, onCaptionTemplate)
+    socket.on(Events.PhaseVoting, onPhaseVoting)
+    socket.on(Events.VotingProgress, onVotingProgress)
+    socket.on(Events.RoundResults, onRoundResults)
+    socket.on(Events.GameOver, onGameOver)
+    socket.on('connect', onConnect)
+    socket.on('disconnect', onDisconnect)
     socket.connect()
 
     const tick = setInterval(() => {
       if (endsAtRef.current === null) return
       const left = Math.max(0, endsAtRef.current - Date.now()) / 1000
-      setNow(Date.now())
+      setClock(Date.now())
       const sec = Math.ceil(left)
       if (left > 0 && sec <= 3 && sec !== lastTickRef.current) {
         lastTickRef.current = sec
@@ -165,18 +273,31 @@ export default function LobbyRoom({ code }: { code: string }) {
     return () => {
       window.removeEventListener('pointerdown', unlock)
       clearInterval(tick)
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current)
+      // Every listener gets removed explicitly: the socket may reconnect after unmount otherwise.
+      socket.off(Events.LobbyJoined, onJoined)
+      socket.off(Events.LobbyUpdate, onState)
+      socket.off(Events.LobbyEmpty, onEmpty)
+      socket.off(Events.PlayerKick, onKick)
+      socket.off(Events.PhaseCaption, onPhaseCaption)
+      socket.off(Events.CaptionTemplate, onCaptionTemplate)
+      socket.off(Events.PhaseVoting, onPhaseVoting)
+      socket.off(Events.VotingProgress, onVotingProgress)
+      socket.off(Events.RoundResults, onRoundResults)
+      socket.off(Events.GameOver, onGameOver)
+      socket.off('connect', onConnect)
+      socket.off('disconnect', onDisconnect)
       socket.disconnect()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // ---------------------------------------------------------------- helpers
+  // ---------------------------------------------------------------- actions
   const joinAs = (username: string) => {
     const name = username.trim().slice(0, 16) || 'Player'
-    const pid = getSavedPlayerId() ?? crypto.randomUUID()
+    const pid = getSavedPlayerId() ?? randomId()
     savePlayerId(pid)
     saveUsername(name)
-    setJoined(true)
     setJoinError(null)
     setNameInput(null)
     socketRef.current?.emit(Events.Join, { username: name, playerId: pid, code: codeRef.current })
@@ -188,14 +309,42 @@ export default function LobbyRoom({ code }: { code: string }) {
     setMutedState(next)
   }
 
-  const timeLeftSec = endsAtRef.current !== null ? Math.max(0, (endsAtRef.current - Date.now()) / 1000) : null
-  const phaseTotal = state ? (state.phase === 'caption' ? state.settings.captionTime : state.phase === 'voting' ? state.settings.voteTime : null) : null
-  const timerPct = timeLeftSec !== null && phaseTotal ? Math.min(100, Math.max(0, (timeLeftSec / phaseTotal) * 100)) : null
-  const myPlayer = state?.players.find((p) => p.id === myId) ?? null
-  const isHost = myPlayer?.isHost ?? false
+  const copyCode = useCallback(async () => {
+    const text = (state?.code ?? codeRef.current).toUpperCase()
+    let ok = false
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text)
+        ok = true
+      }
+    } catch {
+      // fall through to the legacy path
+    }
+    if (!ok) {
+      const ta = document.createElement('textarea')
+      try {
+        ta.value = text
+        ta.setAttribute('readonly', '')
+        ta.style.position = 'fixed'
+        ta.style.opacity = '0'
+        document.body.appendChild(ta)
+        ta.select()
+        ok = document.execCommand('copy')
+      } catch {
+        ok = false
+      } finally {
+        ta.remove()
+      }
+    }
+    setCopyState(ok ? 'ok' : 'fail')
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current)
+    copyTimerRef.current = setTimeout(() => setCopyState('idle'), 1800)
+  }, [state?.code])
 
   const submitCaption = useCallback((sub: CaptionSubmission) => {
     socketRef.current?.emit(Events.CaptionSubmit, sub)
+    // Mark locally right away; the server is the source of truth on resume.
+    setCaption((prev) => (prev ? { ...prev, submitted: true, submission: sub } : prev))
     sounds.submit()
   }, [])
   const rerollTemplate = useCallback(() => {
@@ -212,6 +361,7 @@ export default function LobbyRoom({ code }: { code: string }) {
   const playAgain = useCallback(() => socketRef.current?.emit(Events.PlayAgain), [])
   const kick = useCallback((playerId: string) => socketRef.current?.emit(Events.Kick, { playerId }), [])
   const leave = useCallback(() => {
+    if (!window.confirm('Leave this lobby?')) return
     socketRef.current?.emit(Events.Leave)
     router.replace('/')
   }, [router])
@@ -223,13 +373,28 @@ export default function LobbyRoom({ code }: { code: string }) {
     return () => clearTimeout(id)
   }, [error])
 
+  // Scroll back to the top whenever the view changes; timer ticks and template
+  // rerolls intentionally do not trigger this.
+  const currentMemeIndex = voting?.current ?? null
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+  }, [state?.phase, currentMemeIndex, roundResult, gameOver])
+
   // ---------------------------------------------------------------- render
-  const showJoinForm = !state && nameInput !== null
+  const timeLeftSec = endsAtRef.current !== null ? Math.max(0, (endsAtRef.current - Date.now()) / 1000) : null
+  const phaseTotal = state ? (state.phase === 'caption' ? state.settings.captionTime : state.phase === 'voting' ? state.settings.voteTime : null) : null
+  const timerPct = timeLeftSec !== null && phaseTotal ? Math.min(100, Math.max(0, (timeLeftSec / phaseTotal) * 100)) : null
+  const myPlayer = state?.players.find((p) => p.id === myId) ?? null
+  const isHost = myPlayer?.isHost ?? false
+
+  const showJoinForm = !state && nameInput !== null && !joinError
 
   const inGame = (state?.phase ?? '') === 'caption' || (state?.phase ?? '') === 'voting'
+  const headerPlayers = state ? state.players.slice(0, HEADER_AVATARS) : []
+  const hiddenPlayers = state ? Math.max(0, state.players.length - headerPlayers.length) : 0
   const playerStrip = inGame && state ? (
     <div className="flex flex-wrap items-center gap-1.5">
-      {state.players.map((p) => (
+      {headerPlayers.map((p) => (
         <span
           key={p.id}
           title={p.username + (p.connected ? '' : ' (disconnected)') + (p.isHost ? ' 👑' : '')}
@@ -239,6 +404,14 @@ export default function LobbyRoom({ code }: { code: string }) {
           {p.username[0]?.toUpperCase()}
         </span>
       ))}
+      {hiddenPlayers > 0 && (
+        <span
+          title={state.players.slice(HEADER_AVATARS).map((p) => p.username).join(', ')}
+          className="flex h-8 min-w-8 items-center justify-center rounded-full border border-line bg-night2 px-1.5 text-xs font-bold text-dim"
+        >
+          +{hiddenPlayers}
+        </span>
+      )}
     </div>
   ) : null
 
@@ -253,16 +426,22 @@ export default function LobbyRoom({ code }: { code: string }) {
           <button
             className="rounded-lg border border-line bg-night2 px-2.5 py-1 font-mono text-sm font-bold tracking-[0.2em] text-sun transition hover:border-sun"
             title="Copy lobby code"
-            onClick={() => navigator.clipboard?.writeText((state?.code ?? code).toUpperCase())}
+            onClick={copyCode}
+            aria-live="polite"
           >
-            {state ? state.code : code.toUpperCase()} ⧉
+            {state ? state.code : code.toUpperCase()}{' '}
+            <span className={copyState === 'fail' ? 'font-sans text-rose' : copyState === 'ok' ? 'font-sans text-mint' : ''}>
+              {copyState === 'ok' ? '✓ Copied!' : copyState === 'fail' ? '⚠ Failed' : '⧉'}
+            </span>
           </button>
-          <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${state?.isPublic ? 'border-mint/60 text-mint' : 'border-line text-dim'}`}>
+          <span className={`hidden rounded-full border px-2.5 py-1 text-xs font-semibold sm:inline-flex ${state?.isPublic ? 'border-mint/60 text-mint' : 'border-line text-dim'}`}>
             {state?.isPublic ? '🌍 public' : '🔒 private'}
           </span>
           <button
             className="rounded-lg border border-line bg-night2 px-2.5 py-1.5 text-sm transition hover:border-dim"
             title={muted ? 'Unmute' : 'Mute'}
+            aria-label={muted ? 'Unmute sound' : 'Mute sound'}
+            aria-pressed={muted}
             onClick={toggleMute}
           >
             {muted ? '🔇' : '🔊'}
@@ -381,15 +560,55 @@ export default function LobbyRoom({ code }: { code: string }) {
           )}
         </section>
       ) : state.phase === 'lobby' ? (
-        <LobbyView state={state} myId={myId} onSettings={sendSettings} onStart={startGame} onKick={kick} />
+        <LobbyView
+          state={state}
+          myId={myId}
+          onSettings={sendSettings}
+          onStart={startGame}
+          onKick={kick}
+          error={error}
+          errorNonce={errorNonce}
+        />
       ) : state.phase === 'caption' && caption ? (
-        <CaptionView key={caption.round} template={caption.template} round={caption.round} totalRounds={caption.totalRounds} rerollsLeft={caption.rerollsLeft} onReroll={rerollTemplate} onSubmit={submitCaption} />
+        <CaptionView
+          key={caption.round}
+          template={caption.template}
+          round={caption.round}
+          totalRounds={caption.totalRounds}
+          rerollsLeft={caption.rerollsLeft}
+          submitted={caption.submitted}
+          submission={caption.submission}
+          onReroll={rerollTemplate}
+          onSubmit={submitCaption}
+        />
       ) : state.phase === 'voting' && voting ? (
-        <VotingView key={voting.round} round={voting.round} memes={voting.memes} current={voting.current} myId={myId} onVote={castVote} />
+        <VotingView
+          key={voting.round}
+          round={voting.round}
+          memes={voting.memes}
+          current={voting.current}
+          myId={myId}
+          initialVotes={voting.votes}
+          voteError={voteError}
+          onVote={castVote}
+        />
       ) : state.phase === 'roundResults' && roundResult ? (
-        <ResultsView mode="round" result={roundResult} />
+        <ResultsView
+          mode="round"
+          result={roundResult}
+          myId={myId}
+          totalRounds={state.settings.rounds}
+        />
       ) : state.phase === 'gameOver' && gameOver ? (
-        <ResultsView mode="over" result={gameOver.ranking} memes={gameOver.memes} totalRounds={gameOver.totalRounds} myId={myId} isHost={isHost} onPlayAgain={playAgain} />
+        <ResultsView
+          mode="over"
+          ranking={gameOver.ranking}
+          memes={gameOver.memes}
+          totalRounds={gameOver.totalRounds}
+          myId={myId}
+          isHost={isHost}
+          onPlayAgain={playAgain}
+        />
       ) : (
         <section className="rounded-2xl border border-line bg-card p-8 text-center text-dim shadow-xl">
           <p className="animate-pulse">Waiting…</p>

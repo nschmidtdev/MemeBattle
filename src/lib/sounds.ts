@@ -1,8 +1,22 @@
 // Tiny WebAudio sound effects — no assets, generated on the fly.
 // Kept deliberately simple and quiet; there is a mute toggle in the lobby.
 
+const MUTED_KEY = 'meme-muted'
+
 let ctx: AudioContext | null = null
-let muted = false
+
+/** Read the persisted mute flag. Safe during SSR and when storage is blocked. */
+function readMuted(): boolean {
+  try {
+    if (typeof window === 'undefined') return false
+    return localStorage.getItem(MUTED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+// Initialize from localStorage so a page reload keeps the mute state.
+let muted = readMuted()
 
 function audio(): AudioContext | null {
   try {
@@ -20,6 +34,11 @@ function audio(): AudioContext | null {
 
 export function setMuted(m: boolean) {
   muted = m
+  try {
+    if (typeof window !== 'undefined') localStorage.setItem(MUTED_KEY, m ? '1' : '0')
+  } catch {
+    // storage unavailable (private mode / blocked cookies) — mute still works in-memory
+  }
 }
 
 export function isMuted() {
@@ -27,6 +46,8 @@ export function isMuted() {
 }
 
 function tone(freq: number, start: number, duration: number, type: OscillatorType, volume = 0.08, glideTo?: number) {
+  // Central gate: every effect goes through here, so muting silences everything.
+  if (muted) return
   const ac = audio()
   if (!ac) return
   const t0 = ac.currentTime + start

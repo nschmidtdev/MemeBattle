@@ -1,6 +1,20 @@
+// Load .env* for local runs (`npm run db:seed`, `prisma db seed`); in Docker the
+// environment is provided by Compose. Must run before PrismaClient connects.
+import '../src/lib/env'
 import { PrismaClient } from '@prisma/client'
 
 const prisma = new PrismaClient()
+
+const PACK_NAME = 'Classic'
+const force = process.env.SEED_FORCE === '1'
+
+const PACK_DATA = {
+  name: PACK_NAME,
+  description: 'The original meme templates',
+  isPublic: true,
+  isActive: true,
+  sortOrder: 0,
+}
 
 interface BoxSeed {
   id: string
@@ -78,18 +92,31 @@ const TEMPLATES: TemplateSeed[] = [
 ]
 
 async function main() {
-  let pack = await prisma.pack.findFirst({ where: { name: 'Classic' } })
+  const existingPack = await prisma.pack.findFirst({
+    where: { name: PACK_NAME },
+    include: { templates: { select: { id: true } } },
+  })
+
+  // Never overwrite user edits: an existing pack with templates is left alone.
+  // This also means deleted seed templates stay deleted while others remain.
+  if (existingPack && existingPack.templates.length > 0 && !force) {
+    console.log(
+      `Seed skipped: pack "${PACK_NAME}" already has ${existingPack.templates.length} template(s). ` +
+        'Set SEED_FORCE=1 to update seeded templates.',
+    )
+    return
+  }
+
+  let pack = existingPack
   if (!pack) {
     pack = await prisma.pack.create({
-      data: {
-        name: 'Classic',
-        description: 'The original meme templates',
-        isPublic: true,
-        isActive: true,
-        sortOrder: 0,
-      },
+      data: PACK_DATA,
+      include: { templates: { select: { id: true } } },
     })
-    console.log('Created pack "Classic"')
+    console.log(`Created pack "${PACK_NAME}"`)
+  } else if (force) {
+    await prisma.pack.update({ where: { id: pack.id }, data: PACK_DATA })
+    console.log(`Updated pack "${PACK_NAME}"`)
   }
 
   for (const t of TEMPLATES) {
@@ -101,21 +128,27 @@ async function main() {
       align: 'center',
       rotation: 0,
     }))
-    const existing = await prisma.template.findFirst({ where: { packId: pack!.id, name: t.name } })
+    const existing = await prisma.template.findFirst({ where: { packId: pack.id, name: t.name } })
+
     if (existing) {
-      await prisma.template.update({ where: { id: existing.id }, data: { imageKey: t.imageKey, isFreeform: t.isFreeform, boxes } })
+      if (!force) continue
+      await prisma.template.update({
+        where: { id: existing.id },
+        data: { imageKey: t.imageKey, isFreeform: t.isFreeform, boxes },
+      })
+      console.log(`Updated template "${t.name}"`)
     } else {
       await prisma.template.create({
-        data: { packId: pack!.id, name: t.name, imageKey: t.imageKey, isFreeform: t.isFreeform, boxes, isActive: true },
+        data: { packId: pack.id, name: t.name, imageKey: t.imageKey, isFreeform: t.isFreeform, boxes, isActive: true },
       })
+      console.log(`Created template "${t.name}"`)
     }
-    console.log(`Seeded template "${t.name}"`)
   }
 }
 
 main()
   .catch((e) => {
-    console.error(e)
-    process.exit(1)
+    console.error('Seed failed:', e)
+    process.exitCode = 1
   })
   .finally(() => prisma.$disconnect())

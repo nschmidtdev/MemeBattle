@@ -1,37 +1,57 @@
 import crypto from 'crypto'
 import { prisma } from './prisma'
-import { hashPassword } from './auth'
+import { hashPassword, verifyPassword } from './auth'
 
 /**
  * Ensure an admin user exists on boot.
- * - If ADMIN_PASSWORD is set, the admin password is (re)synced to it.
- * - Otherwise, if the admin does not exist, a random password is generated and logged once.
+ * - If ADMIN_PASSWORD is set, the admin password is synced to it. When the
+ *   password actually changes, every admin session is invalidated.
+ * - If ADMIN_PASSWORD is empty and no admin exists, a random password is
+ *   generated, hashed and logged once. It is never hardcoded.
+ * - If an admin already exists and ADMIN_PASSWORD is empty, nothing changes.
  */
 export async function ensureAdmin(): Promise<void> {
   const email = process.env.ADMIN_EMAIL || 'admin@memebattle.local'
-  let admin = await prisma.user.findFirst({ where: { role: 'admin' } })
+  const envPassword = process.env.ADMIN_PASSWORD ?? ''
+  const admin = await prisma.user.findFirst({ where: { role: 'admin' } })
 
   if (!admin) {
-    let password = process.env.ADMIN_PASSWORD
-    if (!password) {
-      password = crypto.randomBytes(12).toString('base64url')
-    }
+    const generated = envPassword.length === 0
+    const password = generated ? crypto.randomBytes(12).toString('base64url') : envPassword
     const { hash, salt } = hashPassword(password)
-    admin = await prisma.user.create({
+
+    await prisma.user.create({
       data: { email, role: 'admin', passwordHash: hash, salt },
     })
-    console.log('==========================================================')
-    if (!process.env.ADMIN_PASSWORD) {
-      console.log(` Admin created with GENERATED password (shown only once):`)
-      console.log(`   email:    ${email}`)
-      console.log(`   password: ${password}`)
-      console.log('==========================================================')
+
+    if (generated) {
+      // The only secret we ever log: it is shown exactly once, on first boot,
+      // because there is no other way to obtain the initial admin password.
+      console.warn('==========================================================')
+      console.warn(' Meme Battle admin created with a GENERATED password.')
+      console.warn(' This password is shown only once and is not stored in plain text.')
+      console.warn(`   email:    ${email}`)
+      console.warn(`   password: ${password}`)
+      console.warn(' Set ADMIN_PASSWORD to use a fixed password instead.')
+      console.warn('==========================================================')
     } else {
-      console.log(` Admin created: ${email} (password from ADMIN_PASSWORD)`)
-      console.log('==========================================================')
+      console.log(`Admin created: ${email} (password from ADMIN_PASSWORD)`)
     }
-  } else if (process.env.ADMIN_PASSWORD) {
-    const { hash, salt } = hashPassword(process.env.ADMIN_PASSWORD)
-    await prisma.user.update({ where: { id: admin.id }, data: { passwordHash: hash, salt } })
+    return
   }
+
+  // No ADMIN_PASSWORD configured: keep the existing admin untouched.
+  if (envPassword.length === 0) return
+
+  const unchanged =
+    !!admin.passwordHash && !!admin.salt
+      ? await verifyPassword(envPassword, admin.salt, admin.passwordHash)
+      : false
+  if (unchanged) return
+
+  const { hash, salt } = hashPassword(envPassword)
+  await prisma.user.update({ where: { id: admin.id }, data: { passwordHash: hash, salt } })
+  // A password change must not leave old (possibly leaked) sessions usable.
+  await prisma.adminSession.deleteMany({})
+  console.log(`Admin password for ${email} updated from ADMIN_PASSWORD; all sessions invalidated.`)
 }

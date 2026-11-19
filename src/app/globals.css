@@ -1,5 +1,16 @@
 @import 'tailwindcss';
 
+/* Bundled free Impact alternative (Anton, SIL Open Font License).
+ * The editor and the canvas both resolve the "Impact" font option to this
+ * family first and fall back to the system Impact if it cannot be loaded. */
+@font-face {
+  font-family: 'Anton';
+  src: url('/fonts/Anton-Regular.ttf') format('truetype');
+  font-weight: 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 @theme {
   --color-night: #131028;
   --color-night2: #1a1637;
@@ -14,7 +25,7 @@
   --color-mint: #3ecf8e;
   --color-rose: #ff5470;
   --color-sky: #4cc9f0;
-  --font-display: Impact, 'Arial Black', system-ui, sans-serif;
+  --font-display: 'Anton', Impact, 'Arial Black', system-ui, sans-serif;
 }
 
 @layer base {
@@ -161,7 +172,8 @@
     flex: none;
   }
   .meme-text {
-    font-family: Impact, 'Arial Black', sans-serif;
+    font-family: 'Anton', Impact, 'Arial Black', sans-serif;
+    font-weight: 900;
     text-transform: uppercase;
   }
   .meme-canvas-wrap {

@@ -4,6 +4,8 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: meme
+      # Set POSTGRES_PASSWORD in .env before the first start. The default is
+      # only a development convenience and must not be used on a LAN.
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secret}
       POSTGRES_DB: meme_battle
     volumes:
@@ -18,8 +20,8 @@ services:
     build: .
     restart: unless-stopped
     ports:
-      # Overridable via a local .env file or shell environment: APP_PORT=3100
-      - "${APP_PORT:-3000}:3000"
+      # 0.0.0.0 is required for phones on the LAN; use 127.0.0.1 for local-only.
+      - "${APP_BIND:-0.0.0.0}:${APP_PORT:-3000}:3000"
     environment:
       # Keep in sync with POSTGRES_PASSWORD above (both default to "secret").
       DATABASE_URL: postgresql://meme:${POSTGRES_PASSWORD:-secret}@db:5432/meme_battle?schema=public
@@ -28,7 +30,25 @@ services:
       # Overridable via a local .env file or shell environment (compose
       # substitutes ${ADMIN_EMAIL} / ${ADMIN_PASSWORD}).
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@localhost}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-memeadmin}
+      # Empty/unset: a random password is generated on first boot and logged.
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      # Empty = auto-detect (X-Forwarded-Proto / request URL); pin true/false
+      # to force the admin session cookie's Secure flag.
+      COOKIE_SECURE: ${COOKIE_SECURE:-}
+      # Comma-separated allowed Socket.io origins; empty = same-origin only.
+      CORS_ORIGIN: ${CORS_ORIGIN:-}
+      SEED_ON_BOOT: ${SEED_ON_BOOT:-true}
+    healthcheck:
+      # No curl/wget in the slim image; Node 24 ships fetch.
+      test:
+        - CMD
+        - node
+        - "-e"
+        - "fetch('http://127.0.0.1:3000/api/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
     volumes:
       - uploads:/data/uploads
     depends_on:
