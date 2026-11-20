@@ -20,6 +20,10 @@ meme-maker wins. No accounts, no filters, no mercy.
   `Meme ±X · Buddy ±Y` breakdown, and the cumulative overall standings.
 - **Private & public lobby** — share a 5-letter code with your group, or join a
   public lobby. Up to 30 players per lobby.
+- **Four game modes** — Meme Battle (different template for everyone), Same Meme
+  (everyone captions the same template), Relaxed (no points, no winner) and Chaos
+  (a random rule each round: double points, no downvotes, 40-character limit or a
+  fast round).
 - **Guest play** — just pick a name and play, no sign-up.
 - **Custom memes** — admins can create packs and upload template images. Players
   edit every meme in a WYSIWYG editor: pre-placed text boxes are just starting
@@ -188,7 +192,7 @@ ADMIN_EMAIL=admin@localhost ADMIN_PASSWORD="your-dev-password" npx tsx scripts/e
 ## How to play
 
 1. Enter a name and create a lobby (or join one by code).
-2. Pick the template packs, rounds, rerolls, and timer lengths (host only).
+2. Pick the game mode, template packs, rounds, rerolls, and timer lengths (host only).
 3. When the round starts, everyone gets one template — caption it before time runs
    out. Drag texts, resize them from the handles, and reroll the template up to the
    lobby's limit (default 10 per round). Once **everyone** has submitted, voting

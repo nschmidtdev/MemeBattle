@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { LobbyState } from '@/lib/client'
-import type { PackOption } from '@/lib/types'
+import type { GameMode, PackOption } from '@/lib/types'
+import GameModePicker from '@/components/GameModePicker'
 import { formatDuration } from '@/lib/format'
 
 interface Props {
@@ -21,6 +22,7 @@ export default function LobbyView({ state, myId, onSettings, onStart, onKick, er
   const isHost = state.players.find((p) => p.id === myId)?.isHost ?? false
   const [lobbyName, setLobbyName] = useState(state.settings.lobbyName)
   const [rounds, setRounds] = useState(state.settings.rounds)
+  const [mode, setMode] = useState<GameMode>(state.settings.mode)
   const [rerolls, setRerolls] = useState(state.settings.rerolls)
   const [captionTime, setCaptionTime] = useState(state.settings.captionTime)
   const [voteTime, setVoteTime] = useState(state.settings.voteTime)
@@ -33,6 +35,7 @@ export default function LobbyView({ state, myId, onSettings, onStart, onKick, er
   // keep numeric inputs in sync when the server state changes (e.g. play again)
   useEffect(() => {
     setRounds(state.settings.rounds)
+    setMode(state.settings.mode)
     setRerolls(state.settings.rerolls)
     setCaptionTime(state.settings.captionTime)
     setVoteTime(state.settings.voteTime)
@@ -169,6 +172,20 @@ export default function LobbyView({ state, myId, onSettings, onStart, onKick, er
         </h2>
 
         <div className={`grid gap-x-6 gap-y-4 sm:grid-cols-2 ${isHost ? '' : 'pointer-events-none opacity-60'}`}>
+          <div className="sm:col-span-2">
+            <span className="mb-1 block text-xs font-semibold uppercase tracking-wider text-dim">
+              Game mode
+            </span>
+            <GameModePicker
+              value={mode}
+              onChange={(next) => {
+                setMode(next)
+                onSettings({ mode: next })
+              }}
+              disabled={!isHost}
+            />
+          </div>
+
           <label className="block sm:col-span-2">
             <span className="mb-1 block text-xs font-semibold uppercase tracking-wider text-dim">Lobby name</span>
             <input

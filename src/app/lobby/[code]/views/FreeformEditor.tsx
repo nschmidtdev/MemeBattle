@@ -30,6 +30,8 @@ interface Props {
   disabled?: boolean
   padding: MemePadding
   onPaddingChange: (padding: MemePadding) => void
+  /** Per-round text cap (e.g. 40 in Chaos "short text"). */
+  maxTextLen?: number
 }
 
 const NEW_LINE: Omit<FreeformLine, 'id'> = {
@@ -88,6 +90,7 @@ export default function FreeformEditor({
   disabled = false,
   padding,
   onPaddingChange,
+  maxTextLen = MAX_TEXT_LEN,
 }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [lastDeleted, setLastDeleted] = useState<{ line: FreeformLine; index: number } | null>(null)
@@ -541,14 +544,14 @@ export default function FreeformEditor({
                   className="min-h-11 min-w-0 flex-1 rounded-lg border border-line bg-night px-3 py-2 text-base font-semibold"
                   style={{ fontFamily: memeFontFamily(l.font), fontWeight: memeFontWeight(l.font) }}
                   value={l.text}
-                  maxLength={MAX_TEXT_LEN}
+                  maxLength={maxTextLen}
                   disabled={disabled}
                   placeholder={`Text ${i + 1}…`}
                   onFocus={() => setSelectedId(l.id)}
                   onChange={(e) => update(l.id, { text: e.target.value })}
                 />
                 <span className="w-11 flex-none text-right text-[11px] tabular-nums text-dim" aria-hidden>
-                  {l.text.length}/{MAX_TEXT_LEN}
+                  {l.text.length}/{maxTextLen}
                 </span>
                 <button
                   type="button"

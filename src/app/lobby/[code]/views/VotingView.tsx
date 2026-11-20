@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import type { MemeInfo, VoteValue } from '@/lib/types'
+import type { ChaosRule, MemeInfo, VoteValue } from '@/lib/types'
+import { RULE_INFO } from '@/lib/modes'
 import MemeView from '@/components/MemeView'
 
 interface Props {
@@ -17,6 +18,9 @@ interface Props {
   /** This player's own Meme Buddy pick, if already made this round. */
   buddyIndex: number | null
   onPickBuddy: (index: number) => void
+  rule: ChaosRule | null
+  canDownvote: boolean
+  scoresEnabled: boolean
 }
 
 const VOTE_BTNS: Array<{ value: VoteValue; label: string; emoji: string; active: string }> = [
@@ -35,6 +39,9 @@ export default function VotingView({
   voteError,
   buddyIndex,
   onPickBuddy,
+  rule,
+  canDownvote,
+  scoresEnabled,
 }: Props) {
   const [myVotes, setMyVotes] = useState<Record<number, VoteValue>>(() => ({ ...(initialVotes ?? {}) }))
   /** Index of the meme whose canvas finished rendering — vote only on that one. */
@@ -86,6 +93,7 @@ export default function VotingView({
   const progress = memes.length > 0 ? ((current + 1) / memes.length) * 100 : 0
   const buddyMeme = buddyIndex !== null ? (memes[buddyIndex] ?? null) : null
   const buddyIsCurrent = buddyIndex !== null && buddyIndex === current
+  const voteButtons = canDownvote ? VOTE_BTNS : VOTE_BTNS.filter((b) => b.value !== 'down')
 
   const vote = (value: VoteValue) => {
     if (!ready || isOwn) return
@@ -103,6 +111,18 @@ export default function VotingView({
         <h2 className="font-display text-2xl uppercase tracking-wide">
           Vote — <span className="text-sun">Round {round}</span>
         </h2>
+        <div className="flex flex-wrap items-center gap-2">
+          {rule && (
+            <span className="rounded-full border border-sun/60 bg-sun/10 px-2.5 py-1 text-xs font-bold text-sun">
+              {RULE_INFO[rule].emoji} {RULE_INFO[rule].label}
+            </span>
+          )}
+          {!scoresEnabled && (
+            <span className="rounded-full border border-mint/60 bg-mint/10 px-2.5 py-1 text-xs font-bold text-mint">
+              🌿 Relaxed · no points
+            </span>
+          )}
+        </div>
         {/* compact progress: n/N + thin bar (scales to any lobby size) */}
         <div className="flex items-center gap-2" title={`Meme ${current + 1} of ${memes.length}`}>
           <span className="text-sm font-bold tabular-nums text-dim">
@@ -156,8 +176,10 @@ export default function VotingView({
                   😎 That&apos;s your masterpiece — you can&apos;t vote on it.
                 </p>
               ) : (
-                <div className="grid grid-cols-3 gap-2 sm:gap-3">
-                  {VOTE_BTNS.map(({ value, label, emoji, active }) => (
+                <div
+                  className={`grid gap-2 sm:gap-3 ${canDownvote ? 'grid-cols-3' : 'grid-cols-2'}`}
+                >
+                  {voteButtons.map(({ value, label, emoji, active }) => (
                     <button
                       key={value}
                       className={`flex flex-col items-center gap-1 rounded-2xl border border-line bg-night2 py-3 transition hover:border-dim hover:bg-card2 active:translate-y-px disabled:cursor-default disabled:opacity-50 disabled:hover:border-line disabled:hover:bg-night2 ${
@@ -173,8 +195,10 @@ export default function VotingView({
                 </div>
               )}
 
-              {/* Meme Buddy: one secret pick per round, only on the shown meme. */}
-              <div className="mt-3 border-t border-line/70 pt-3">
+              {scoresEnabled && (
+                <>
+                  {/* Meme Buddy: one secret pick per round, only on the shown meme. */}
+                  <div className="mt-3 border-t border-line/70 pt-3">
                 <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-bold">🤝 Meme Buddy</p>
@@ -211,10 +235,16 @@ export default function VotingView({
                     )}
                   </div>
                 </div>
-              </div>
+                  </div>
+                </>
+              )}
 
               <p className="mt-3 text-center text-xs text-dim">
-                {isOwn || ready ? '🤫 Votes stay secret until the results' : 'Preparing meme…'}
+                {!scoresEnabled
+                  ? '🌿 Relaxed round — the votes are just for fun'
+                  : isOwn || ready
+                    ? '🤫 Votes stay secret until the results'
+                    : 'Preparing meme…'}
               </p>
             </>
           )}

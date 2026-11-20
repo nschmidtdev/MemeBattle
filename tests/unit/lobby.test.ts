@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { normalizeSettings, sanitizeLobbyName, sanitizeUsername } from '../../src/server/lobby'
+import { normalizeSettings, pickChaosRule, sanitizeLobbyName, sanitizeUsername } from '../../src/server/lobby'
+import { CHAOS_RULES } from '../../src/lib/types'
 
 // `lobby.ts` imports `./templates`, which pulls in the Prisma client. The unit
 // tests only exercise pure helpers, so the module is mocked to keep a database
@@ -11,6 +12,7 @@ vi.mock('../../src/server/templates', () => ({
 describe('normalizeSettings', () => {
   it('applies the documented defaults for missing input', () => {
     expect(normalizeSettings(undefined)).toEqual({
+      mode: 'normal',
       rounds: 3,
       rerolls: 10,
       captionTime: 45,
@@ -25,8 +27,9 @@ describe('normalizeSettings', () => {
 
   it('keeps valid values', () => {
     expect(
-      normalizeSettings({ rounds: 5, rerolls: 12, captionTime: 30, voteTime: 7, packIds: ['p1', 'p2'], lobbyName: 'Friday' }),
+      normalizeSettings({ mode: 'chaos', rounds: 5, rerolls: 12, captionTime: 30, voteTime: 7, packIds: ['p1', 'p2'], lobbyName: 'Friday' }),
     ).toEqual({
+      mode: 'chaos',
       rounds: 5,
       rerolls: 12,
       captionTime: 30,
@@ -42,6 +45,15 @@ describe('normalizeSettings', () => {
     expect(normalizeSettings({ rounds: 11 }).rounds).toBe(10)
     expect(normalizeSettings({ rounds: 1 }).rounds).toBe(1)
     expect(normalizeSettings({ rounds: 10 }).rounds).toBe(10)
+  })
+
+  it('keeps valid game modes and falls back to normal', () => {
+    for (const mode of ['normal', 'same', 'relaxed', 'chaos'] as const) {
+      expect(normalizeSettings({ mode }).mode).toBe(mode)
+    }
+    for (const mode of ['topic', 'garbage', 42, null, undefined]) {
+      expect(normalizeSettings({ mode }).mode).toBe('normal')
+    }
   })
 
   it('clamps rerolls to 0..20 and defaults to 10', () => {
@@ -130,7 +142,25 @@ describe('normalizeSettings', () => {
 
   it('ignores unknown properties', () => {
     const settings = normalizeSettings({ rounds: 2, nonsense: true })
-    expect(settings).toEqual({ rounds: 2, rerolls: 10, captionTime: 45, voteTime: 10, packIds: [], lobbyName: 'Meme Lobby' })
+    expect(settings).toEqual({ mode: 'normal', rounds: 2, rerolls: 10, captionTime: 45, voteTime: 10, packIds: [], lobbyName: 'Meme Lobby' })
+  })
+})
+
+describe('pickChaosRule', () => {
+  it('only applies to chaos mode', () => {
+    for (const mode of ['normal', 'same', 'relaxed'] as const) {
+      expect(pickChaosRule(mode, null, () => 0)).toBeNull()
+    }
+  })
+
+  it('picks a rule and avoids repeating the previous one', () => {
+    expect(pickChaosRule('chaos', null, () => 0)).toBe(CHAOS_RULES[0])
+    expect(pickChaosRule('chaos', CHAOS_RULES[0], () => 0)).toBe(CHAOS_RULES[1])
+    expect(pickChaosRule('chaos', CHAOS_RULES[0], () => 0.99)).toBe(CHAOS_RULES[CHAOS_RULES.length - 1])
+  })
+
+  it('falls back to the full pool when only one rule is left', () => {
+    expect(pickChaosRule('chaos', 'double', () => 0.5)).not.toBeNull()
   })
 })
 

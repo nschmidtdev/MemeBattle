@@ -5,6 +5,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- socket payloads are dynamic test data */
 import '../src/lib/env' // load the same .env* files as the server (ADMIN_*, PORT, ...)
 import { io, type Socket } from 'socket.io-client'
+import { CHAOS_RULES, SHORT_TEXT_MAX } from '../src/lib/types'
 
 const BASE = (process.env.BASE_URL ?? 'http://localhost:3000').replace(/\/+$/, '')
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? 'admin@localhost'
@@ -716,6 +717,202 @@ async function runSuite() {
   A.disconnect()
   B.disconnect()
 
+  // ------------------------------------------------------------- game modes
+  console.log('\nGame modes:')
+
+  // Same Meme: everyone gets the same template, rerolls are disabled.
+  {
+    const H = await openSocket()
+    const G = await openSocket()
+    const hJoined = waitEvent<any>(H, 'lobby:joined', 10000)
+    H.emit('lobby:join', {
+      username: 'SameHost',
+      create: true,
+      isPublic: false,
+      lobbyName: 'Same Mode',
+      settings: {
+        mode: 'same',
+        rounds: 1,
+        rerolls: 10,
+        captionTime: 15,
+        voteTime: 5,
+        packIds: [pack.id],
+      },
+    })
+    const h: { code: string } = await hJoined
+    const gJoined = waitEvent<any>(G, 'lobby:joined', 10000)
+    G.emit('lobby:join', { username: 'SameGuest', code: h.code })
+    await gJoined
+    await new Promise((r) => setTimeout(r, 150))
+
+    const phaseP = waitEvent<any>(H, 'phase:caption', 15000)
+    const hTplP = waitEvent<any>(H, 'caption:template', 15000)
+    const gTplP = waitEvent<any>(G, 'caption:template', 15000)
+    H.emit('lobby:start')
+    const [phase, hTpl, gTpl] = await Promise.all([phaseP, hTplP, gTplP])
+
+    ok(
+      'same mode: both players get the same template',
+      hTpl.template?.id === gTpl.template?.id,
+      { host: hTpl.template?.id, guest: gTpl.template?.id },
+    )
+    ok('same mode: rerolls are disabled', hTpl.rerollsLeft === 0 && gTpl.rerollsLeft === 0, {
+      host: hTpl.rerollsLeft,
+      guest: gTpl.rerollsLeft,
+    })
+    ok(
+      'same mode payload',
+      phase.mode === 'same' && phase.rule === null && phase.scoresEnabled === true,
+      phase,
+    )
+    H.disconnect()
+    G.disconnect()
+  }
+
+  // Relaxed: a full round still runs, but every score stays zero.
+  {
+    const H = await openSocket()
+    const G = await openSocket()
+    const hJoined = waitEvent<any>(H, 'lobby:joined', 10000)
+    H.emit('lobby:join', {
+      username: 'RelaxedHost',
+      create: true,
+      isPublic: false,
+      lobbyName: 'Relaxed Mode',
+      settings: {
+        mode: 'relaxed',
+        rounds: 1,
+        rerolls: 0,
+        captionTime: 15,
+        voteTime: 5,
+        packIds: [pack.id],
+      },
+    })
+    const h: { code: string } = await hJoined
+    const gJoined = waitEvent<any>(G, 'lobby:joined', 10000)
+    G.emit('lobby:join', { username: 'RelaxedGuest', code: h.code })
+    await gJoined
+    await new Promise((r) => setTimeout(r, 150))
+
+    const phaseP = waitEvent<any>(H, 'phase:caption', 15000)
+    const hTplP = waitEvent<any>(H, 'caption:template', 15000)
+    const gTplP = waitEvent<any>(G, 'caption:template', 15000)
+    H.emit('lobby:start')
+    const [phase, hTpl, gTpl] = await Promise.all([phaseP, hTplP, gTplP])
+
+    ok(
+      'relaxed mode payload',
+      phase.mode === 'relaxed' && phase.scoresEnabled === false && phase.rule === null,
+      phase,
+    )
+    ok(
+      'relaxed mode: same template',
+      hTpl.template?.id === gTpl.template?.id,
+      { host: hTpl.template?.id, guest: gTpl.template?.id },
+    )
+
+    const line = (text: string) => [
+      {
+        id: `relaxed-${text}`,
+        text,
+        x: 0.5,
+        y: 0.9,
+        w: 0.8,
+        fontSize: 0.07,
+        color: '#ffffff',
+        stroke: '#000000',
+        font: 'Impact',
+        align: 'center',
+        rotation: 0,
+      },
+    ]
+    const resultsP = waitEvent<any>(H, 'round:results', 30000)
+    H.emit('caption:submit', { texts: {}, lines: line('relaxed host') })
+    G.emit('caption:submit', { texts: {}, lines: line('relaxed guest') })
+    const relaxedResults = await resultsP
+
+    ok(
+      'relaxed results: every meme scores zero',
+      relaxedResults.memes.every((m: any) => m.score === 0 && m.voteScore === 0),
+      relaxedResults.memes.map((m: any) => m.score),
+    )
+    ok(
+      'relaxed results: all totals stay zero',
+      Object.values(relaxedResults.totals).every((value) => value === 0) &&
+        Object.values(relaxedResults.roundTotals).every((value) => value === 0),
+      relaxedResults.totals,
+    )
+    ok(
+      'relaxed results: no buddy picks',
+      Array.isArray(relaxedResults.buddies) && relaxedResults.buddies.length === 0,
+      relaxedResults.buddies,
+    )
+    ok(
+      'relaxed results carry the mode',
+      relaxedResults.gameMode === 'relaxed' && relaxedResults.rule === null,
+      { gameMode: relaxedResults.gameMode, rule: relaxedResults.rule },
+    )
+    H.disconnect()
+    G.disconnect()
+  }
+
+  // Chaos: every round gets one of the four documented rules.
+  {
+    const H = await openSocket()
+    const G = await openSocket()
+    const hJoined = waitEvent<any>(H, 'lobby:joined', 10000)
+    H.emit('lobby:join', {
+      username: 'ChaosHost',
+      create: true,
+      isPublic: false,
+      lobbyName: 'Chaos Mode',
+      settings: {
+        mode: 'chaos',
+        rounds: 1,
+        rerolls: 0,
+        captionTime: 20,
+        voteTime: 6,
+        packIds: [pack.id],
+      },
+    })
+    const h: { code: string } = await hJoined
+    const gJoined = waitEvent<any>(G, 'lobby:joined', 10000)
+    G.emit('lobby:join', { username: 'ChaosGuest', code: h.code })
+    await gJoined
+    await new Promise((r) => setTimeout(r, 150))
+
+    const phaseP = waitEvent<any>(H, 'phase:caption', 15000)
+    const hTplP = waitEvent<any>(H, 'caption:template', 15000)
+    const gTplP = waitEvent<any>(G, 'caption:template', 15000)
+    H.emit('lobby:start')
+    const [phase, hTpl, gTpl] = await Promise.all([phaseP, hTplP, gTplP])
+
+    ok(
+      'chaos mode: valid rule',
+      phase.mode === 'chaos' && CHAOS_RULES.includes(phase.rule),
+      phase.rule,
+    )
+    ok(
+      'chaos mode: max text matches the rule',
+      phase.maxTextLen === (phase.rule === 'shortText' ? SHORT_TEXT_MAX : 120) &&
+        hTpl.maxTextLen === phase.maxTextLen &&
+        gTpl.maxTextLen === phase.maxTextLen,
+      { rule: phase.rule, phaseMax: phase.maxTextLen, hostMax: hTpl.maxTextLen },
+    )
+    ok(
+      'chaos mode: fast rounds get half the caption time',
+      phase.rule !== 'fast' || phase.timeLeft <= 10,
+      { rule: phase.rule, timeLeft: phase.timeLeft },
+    )
+    ok(
+      'chaos mode: same template',
+      hTpl.template?.id === gTpl.template?.id,
+      { host: hTpl.template?.id, guest: gTpl.template?.id },
+    )
+    H.disconnect()
+    G.disconnect()
+  }
+
   // ------------------------------------------------------------- host handover & same-name rejoin
   console.log('\nHost handover & same-name rejoin:')
   const R1 = await openSocket()
@@ -799,7 +996,7 @@ async function runSuite() {
     create: true,
     isPublic: false,
     lobbyName: 'Garbage Lobby',
-    settings: { packIds: null, rounds: 'x', rerolls: 'x', captionTime: -5, voteTime: 999 },
+    settings: { mode: 'nonsense', packIds: null, rounds: 'x', rerolls: 'x', captionTime: -5, voteTime: 999 },
   })
   const g1: { code: string; playerId: string } = await g1Joined
   ok('garbage settings: lobby created without crashing', /^[A-Z0-9]{5}$/.test(g1?.code ?? ''), g1)
@@ -808,7 +1005,8 @@ async function runSuite() {
   const gs = latest(g1Updates)?.settings
   ok(
     'garbage settings normalized to defaults/clamps',
-    gs?.rounds === 3 &&
+    gs?.mode === 'normal' &&
+      gs?.rounds === 3 &&
       gs?.rerolls === 10 &&
       gs?.captionTime === 5 &&
       gs?.voteTime === 60 &&

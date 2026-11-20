@@ -14,6 +14,14 @@ export const DEFAULT_REROLLS = 10
 export const MAX_LINES = 12
 /** Maximum length of a single caption text or freeform line. */
 export const MAX_TEXT_LEN = 120
+/** Chaos mode "short text" cap. */
+export const SHORT_TEXT_MAX = 40
+
+export const GAME_MODES = ['normal', 'same', 'relaxed', 'chaos'] as const
+export type GameMode = (typeof GAME_MODES)[number]
+
+export const CHAOS_RULES = ['double', 'noDownvotes', 'shortText', 'fast'] as const
+export type ChaosRule = (typeof CHAOS_RULES)[number]
 /** Allowed ranges for freeform line placement (relative units). */
 export const LINE_BOUNDS = {
   xMin: 0.05,
@@ -165,6 +173,7 @@ export interface GameOverPayload {
   ranking: RankingEntry[]
   totalRounds: number
   memes: FinalMeme[]
+  gameMode: GameMode
 }
 
 export interface VoteTally {
@@ -188,6 +197,10 @@ export interface RoundBuddyPick {
 
 export interface RoundResult {
   round: number
+  /** Mode of the game this round belongs to. */
+  gameMode: GameMode
+  /** Chaos rule for this round (null in every other mode). */
+  rule: ChaosRule | null
   memes: Array<{
     index: number
     playerId: string
@@ -220,6 +233,7 @@ export interface RoundResult {
 }
 
 export interface LobbySettings {
+  mode: GameMode
   rounds: number
   /** Template rerolls per player and round (0..MAX_REROLLS). */
   rerolls: number

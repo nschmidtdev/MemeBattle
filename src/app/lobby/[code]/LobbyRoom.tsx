@@ -4,13 +4,15 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import type {
   CaptionSubmission,
+  ChaosRule,
+  GameMode,
   GameOverPayload,
   MemeInfo,
   RoundResult,
   TemplateData,
   VoteValue,
 } from '@/lib/types'
-import { Events, MAX_REROLLS } from '@/lib/types'
+import { Events, MAX_REROLLS, MAX_TEXT_LEN } from '@/lib/types'
 import { formatDuration } from '@/lib/format'
 import {
   clearIdentity,
@@ -36,6 +38,11 @@ interface CaptionState {
   /** Server-confirmed submission, restored on reconnect. */
   submitted: boolean
   submission: CaptionSubmission | null
+  timeTotal: number
+  mode: GameMode
+  rule: ChaosRule | null
+  maxTextLen: number
+  scoresEnabled: boolean
 }
 
 interface VotingState {
@@ -46,6 +53,11 @@ interface VotingState {
   votes: Record<number, VoteValue>
   /** This player's own Meme Buddy pick for the round (secret until results). */
   buddyIndex: number | null
+  timeTotal: number
+  mode: GameMode
+  rule: ChaosRule | null
+  canDownvote: boolean
+  scoresEnabled: boolean
 }
 
 type CopyState = 'idle' | 'ok' | 'fail'
@@ -158,7 +170,25 @@ export default function LobbyRoom({ code }: { code: string }) {
       lastTickRef.current = Infinity
     }
 
-    const onPhaseCaption = ({ round, totalRounds, timeLeft }: { round: number; totalRounds: number; timeLeft: number }) => {
+    const onPhaseCaption = ({
+      round,
+      totalRounds,
+      timeLeft,
+      timeTotal,
+      mode,
+      rule,
+      maxTextLen,
+      scoresEnabled,
+    }: {
+      round: number
+      totalRounds: number
+      timeLeft: number
+      timeTotal?: number
+      mode?: GameMode
+      rule?: ChaosRule | null
+      maxTextLen?: number
+      scoresEnabled?: boolean
+    }) => {
       setCaption({
         template: null,
         round,
@@ -166,6 +196,11 @@ export default function LobbyRoom({ code }: { code: string }) {
         rerollsLeft: MAX_REROLLS,
         submitted: false,
         submission: null,
+        timeTotal: timeTotal ?? timeLeft,
+        mode: mode ?? 'normal',
+        rule: rule ?? null,
+        maxTextLen: maxTextLen ?? MAX_TEXT_LEN,
+        scoresEnabled: scoresEnabled ?? true,
       })
       setVoting(null)
       setRoundResult(null)
@@ -177,19 +212,29 @@ export default function LobbyRoom({ code }: { code: string }) {
     const onCaptionTemplate = ({
       template,
       timeLeft,
+      timeTotal,
       rerollsLeft,
       round,
       totalRounds,
       submitted,
       submission,
+      mode,
+      rule,
+      maxTextLen,
+      scoresEnabled,
     }: {
       template: TemplateData | null
       timeLeft?: number
+      timeTotal?: number
       rerollsLeft?: number
       round?: number
       totalRounds?: number
       submitted?: boolean
       submission?: CaptionSubmission | null
+      mode?: GameMode
+      rule?: ChaosRule | null
+      maxTextLen?: number
+      scoresEnabled?: boolean
     }) => {
       setCaption((prev) => ({
         template,
@@ -199,6 +244,13 @@ export default function LobbyRoom({ code }: { code: string }) {
         // Resume payloads carry the server-confirmed submission; rerolls omit it.
         submitted: typeof submitted === 'boolean' ? submitted : (prev?.submitted ?? false),
         submission: submission !== undefined ? submission : (prev?.submission ?? null),
+        timeTotal: typeof timeTotal === 'number' ? timeTotal : (prev?.timeTotal ?? timeLeft ?? 0),
+        mode: mode ?? prev?.mode ?? 'normal',
+        rule: rule !== undefined ? rule : (prev?.rule ?? null),
+        maxTextLen:
+          typeof maxTextLen === 'number' ? maxTextLen : (prev?.maxTextLen ?? MAX_TEXT_LEN),
+        scoresEnabled:
+          typeof scoresEnabled === 'boolean' ? scoresEnabled : (prev?.scoresEnabled ?? true),
       }))
       if (typeof timeLeft === 'number') startTimer(timeLeft)
     }
@@ -208,15 +260,25 @@ export default function LobbyRoom({ code }: { code: string }) {
       memes,
       current,
       timeLeft,
+      timeTotal,
       votes,
       buddyIndex,
+      mode,
+      rule,
+      canDownvote,
+      scoresEnabled,
     }: {
       round: number
       memes: MemeInfo[]
       current: number
       timeLeft: number
+      timeTotal?: number
       votes?: Record<number, VoteValue>
       buddyIndex?: number | null
+      mode?: GameMode
+      rule?: ChaosRule | null
+      canDownvote?: boolean
+      scoresEnabled?: boolean
     }) => {
       setVoting({
         round,
@@ -225,6 +287,11 @@ export default function LobbyRoom({ code }: { code: string }) {
         votes: votes ?? {},
         // Resume payloads carry the player's own pick; older payloads omit it.
         buddyIndex: typeof buddyIndex === 'number' ? buddyIndex : null,
+        timeTotal: timeTotal ?? timeLeft,
+        mode: mode ?? 'normal',
+        rule: rule ?? null,
+        canDownvote: canDownvote ?? true,
+        scoresEnabled: scoresEnabled ?? true,
       })
       currentMemeRef.current = current
       setCaption(null)
@@ -235,7 +302,13 @@ export default function LobbyRoom({ code }: { code: string }) {
       // The following voting:progress(0) plays memeShown(); don't double it here.
     }
 
-    const onVotingProgress = ({ index, timeLeft }: { index: number; timeLeft: number }) => {
+    const onVotingProgress = ({
+      index,
+      timeLeft,
+    }: {
+      index: number
+      timeLeft: number
+    }) => {
       currentMemeRef.current = index
       setVoting((prev) => (prev ? { ...prev, current: index } : prev))
       startTimer(timeLeft)
@@ -258,8 +331,8 @@ export default function LobbyRoom({ code }: { code: string }) {
       sounds.results()
     }
 
-    const onGameOver = ({ ranking, totalRounds, memes }: GameOverPayload) => {
-      setGameOver({ ranking, totalRounds, memes })
+    const onGameOver = ({ ranking, totalRounds, memes, gameMode }: GameOverPayload) => {
+      setGameOver({ ranking, totalRounds, memes, gameMode: gameMode ?? 'normal' })
       setRoundResult(null)
       sounds.win()
     }
@@ -415,7 +488,13 @@ export default function LobbyRoom({ code }: { code: string }) {
 
   // ---------------------------------------------------------------- render
   const timeLeftSec = endsAtRef.current !== null ? Math.max(0, (endsAtRef.current - Date.now()) / 1000) : null
-  const phaseTotal = state ? (state.phase === 'caption' ? state.settings.captionTime : state.phase === 'voting' ? state.settings.voteTime : null) : null
+  const phaseTotal = state
+    ? state.phase === 'caption'
+      ? (caption?.timeTotal || state.settings.captionTime)
+      : state.phase === 'voting'
+        ? (voting?.timeTotal || state.settings.voteTime)
+        : null
+    : null
   const timerPct = timeLeftSec !== null && phaseTotal ? Math.min(100, Math.max(0, (timeLeftSec / phaseTotal) * 100)) : null
   const myPlayer = state?.players.find((p) => p.id === myId) ?? null
   const isHost = myPlayer?.isHost ?? false
@@ -617,6 +696,9 @@ export default function LobbyRoom({ code }: { code: string }) {
           round={caption.round}
           totalRounds={caption.totalRounds}
           rerollsLeft={caption.rerollsLeft}
+          mode={caption.mode}
+          rule={caption.rule}
+          maxTextLen={caption.maxTextLen}
           submitted={caption.submitted}
           submission={caption.submission}
           onReroll={rerollTemplate}
@@ -634,6 +716,9 @@ export default function LobbyRoom({ code }: { code: string }) {
           onVote={castVote}
           buddyIndex={voting.buddyIndex}
           onPickBuddy={pickBuddy}
+          rule={voting.rule}
+          canDownvote={voting.canDownvote}
+          scoresEnabled={voting.scoresEnabled}
         />
       ) : state.phase === 'roundResults' && roundResult ? (
         <ResultsView
@@ -641,6 +726,7 @@ export default function LobbyRoom({ code }: { code: string }) {
           result={roundResult}
           myId={myId}
           totalRounds={state.settings.rounds}
+          gameMode={roundResult.gameMode}
         />
       ) : state.phase === 'gameOver' && gameOver ? (
         <ResultsView
@@ -651,6 +737,7 @@ export default function LobbyRoom({ code }: { code: string }) {
           myId={myId}
           isHost={isHost}
           onPlayAgain={playAgain}
+          gameMode={gameOver.gameMode}
         />
       ) : (
         <section className="rounded-2xl border border-line bg-card p-8 text-center text-dim shadow-xl">

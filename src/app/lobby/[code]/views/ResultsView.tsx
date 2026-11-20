@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import type {
   CaptionSubmission,
   FinalMeme,
+  GameMode,
   GameOverPayload,
   RoundBuddyPick,
   RoundResult,
@@ -11,6 +12,7 @@ import type {
 } from '@/lib/types'
 import MemeView from '@/components/MemeView'
 import Icon from '@/components/Icon'
+import { RULE_INFO } from '@/lib/modes'
 import { downloadBlob, downloadMemePng, renderMemePngBlob } from '@/lib/meme'
 import { createZip, type ZipEntry } from '@/lib/zip'
 
@@ -60,6 +62,7 @@ interface RoundProps {
   myId?: string | null
   /** Needed to announce the final round instead of "next round". */
   totalRounds?: number
+  gameMode: GameMode
 }
 interface OverProps extends GameOverPayload {
   mode: 'over'
@@ -197,11 +200,13 @@ function MemeCard({
   mine,
   roundView = false,
   buddyNames = [],
+  showScore = true,
 }: {
   meme: CardMeme
   mine: boolean
   roundView?: boolean
   buddyNames?: string[]
+  showScore?: boolean
 }) {
   const holderRef = useRef<HTMLElement | null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -293,19 +298,19 @@ function MemeCard({
       </div>
       <figcaption className="px-2.5 py-2">
         <div className="flex items-center gap-2">
-          {roundView ? (
+          {roundView && showScore ? (
             <span className="w-6 text-center text-lg font-extrabold text-dim" title={`Rank ${meme.rank ?? '?'}`}>
               {meme.rank ? medal(meme.rank) : '–'}
             </span>
           ) : (
-            gold && <span className="text-lg" title="Best meme of its round">👑</span>
+            !roundView && showScore && gold && <span className="text-lg" title="Best meme of its round">👑</span>
           )}
           <span className="min-w-0 flex-1 truncate text-sm font-bold">
             {meme.username}
             {mine && <span className="ml-1 text-xs text-punch">(you)</span>}
           </span>
           {!roundView && <span className="text-[10px] font-bold uppercase tracking-wider text-dim">R{meme.round}</span>}
-          {!roundView && buddies > 0 && (
+          {showScore && !roundView && buddies > 0 && (
             <span
               className="rounded-full border border-sun/50 bg-sun/10 px-1.5 py-0.5 text-[10px] font-bold text-sun"
               title={`${buddies} Meme ${buddies === 1 ? 'Buddy' : 'Buddies'} (+10 each)`}
@@ -313,9 +318,11 @@ function MemeCard({
               🤝 ×{buddies}
             </span>
           )}
-          <span className={`text-sm font-extrabold tabular-nums ${scoreCls(meme.score)}`}>{fmt(meme.score)}</span>
+          {showScore && (
+            <span className={`text-sm font-extrabold tabular-nums ${scoreCls(meme.score)}`}>{fmt(meme.score)}</span>
+          )}
         </div>
-        {roundView && buddies > 0 && (
+        {showScore && roundView && buddies > 0 && (
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
             <span
               className="rounded-full border border-sun/50 bg-sun/10 px-1.5 py-0.5 text-[10px] font-bold text-sun"
@@ -342,12 +349,14 @@ function MemeGallery({
   empty,
   roundView = false,
   buddyNamesFor,
+  showScore = true,
 }: {
   memes: Array<CardMeme & { rank: number }>
   myId: string | null
   empty: string
   roundView?: boolean
   buddyNamesFor?: (meme: CardMeme & { rank: number }) => string[]
+  showScore?: boolean
 }) {
   return (
     <div className="mx-auto grid max-w-2xl grid-cols-1 justify-center gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -358,6 +367,7 @@ function MemeGallery({
           mine={meme.playerId === myId}
           roundView={roundView}
           buddyNames={buddyNamesFor?.(meme)}
+          showScore={showScore}
         />
       ))}
       {memes.length === 0 && <p className="col-span-full text-center text-sm text-dim">{empty}</p>}
@@ -513,6 +523,7 @@ function DownloadAllButton({ memes }: { memes: Array<CardMeme & { rank: number }
 export default function ResultsView(props: Props) {
   if (props.mode === 'round') {
     const result: RoundData = props.result
+    const relaxed = props.gameMode === 'relaxed'
     const myId = props.myId ?? null
     const playerMeta = result.players ?? {}
     const totals = result.totals ?? {}
@@ -605,15 +616,26 @@ export default function ResultsView(props: Props) {
             Round <span className="text-sun">{result.round}</span> results
           </h2>
           <p className="mb-4 text-center text-sm text-dim">
-            {gallery.length} {gallery.length === 1 ? 'meme' : 'memes'} this round · round points include Meme
-            Buddies
+            {gallery.length} {gallery.length === 1 ? 'meme' : 'memes'} this round
+            {relaxed ? ' · relaxed round, no points' : ' · round points include Meme Buddies'}
           </p>
 
-          <div className="grid items-start gap-5 lg:grid-cols-[1fr_360px]">
+          {result.rule && (
+            <p className="mx-auto mb-4 w-fit rounded-full border border-sun/60 bg-sun/10 px-3 py-1 text-xs font-bold text-sun">
+              {RULE_INFO[result.rule].emoji} {RULE_INFO[result.rule].label} —{' '}
+              {RULE_INFO[result.rule].description}
+            </p>
+          )}
+
+          <div
+            className={`grid items-start gap-5 ${
+              relaxed ? '' : 'lg:grid-cols-[1fr_360px]'
+            }`}
+          >
             {/* ------------------------------------------------ this round's memes */}
-            <div className="order-2 lg:order-1">
+            <div className={relaxed ? '' : 'order-2 lg:order-1'}>
               <h3 className="mb-3 text-center text-sm font-bold uppercase tracking-widest text-dim">
-                Memes this round — best first
+                Memes this round{relaxed ? '' : ' — best first'}
               </h3>
               <MemeGallery
                 memes={gallery}
@@ -621,10 +643,19 @@ export default function ResultsView(props: Props) {
                 empty="Nobody submitted a meme this round."
                 roundView
                 buddyNamesFor={buddyNamesFor}
+                showScore={!relaxed}
               />
+              {relaxed && (
+                <p className="mt-4 rounded-xl border border-mint/50 bg-mint/10 px-4 py-3 text-center font-semibold text-mint">
+                  🌿 Relaxed round — no points, no winner. Just the memes.
+                  <span className="mt-1 block text-xs font-normal text-dim">
+                    {isFinal ? 'Final gallery coming up…' : 'Next round starting soon…'}
+                  </span>
+                </p>
+              )}
             </div>
 
-            {/* --------------------------------------------------- round points */}
+            {!relaxed && (
             <div className="order-1 lg:order-2">
               <h3 className="mb-3 text-center text-sm font-bold uppercase tracking-widest text-dim lg:text-left">
                 Round points
@@ -723,6 +754,7 @@ export default function ResultsView(props: Props) {
                 <p className="mt-4 animate-pulse text-center text-sm text-dim">Next round starting soon…</p>
               )}
             </div>
+            )}
           </div>
         </div>
       </section>
@@ -733,6 +765,7 @@ export default function ResultsView(props: Props) {
   const ranking = rankPlayers(props.ranking)
   const podium = ranking.filter((p) => p.rank <= 3)
   const gallery = rankGallery(((props.memes ?? []) as GalleryMeme[]).filter(hasVisibleContent))
+  const relaxed = props.gameMode === 'relaxed'
 
   return (
     <section className="mx-auto max-w-6xl">
@@ -745,6 +778,7 @@ export default function ResultsView(props: Props) {
         </h2>
         <p className="mb-4 text-center text-sm text-dim">
           after {props.totalRounds} glorious rounds · {gallery.length} memes
+          {relaxed ? ' · just for fun' : ''}
         </p>
 
         <div className="grid items-start gap-5 lg:grid-cols-[1fr_360px]">
@@ -752,64 +786,77 @@ export default function ResultsView(props: Props) {
           <div className="order-2 lg:order-1">
             <div className="mb-3 flex flex-col items-center gap-2">
               <h3 className="text-center text-sm font-bold uppercase tracking-widest text-dim">
-                All memes — best rated first
+                All memes{relaxed ? '' : ' — best rated first'}
               </h3>
               {gallery.length > 0 && <DownloadAllButton memes={gallery} />}
             </div>
-            <MemeGallery memes={gallery} myId={props.myId} empty="No memes made it… 🤷" />
+            <MemeGallery
+              memes={gallery}
+              myId={props.myId}
+              empty="No memes made it… 🤷"
+              showScore={!relaxed}
+            />
           </div>
 
           {/* ------------------------------------------------- points staircase */}
           <div className="order-1 lg:order-2">
-            <h3 className="mb-3 text-center text-sm font-bold uppercase tracking-widest text-dim lg:text-left">
-              Points
-            </h3>
+            {relaxed ? (
+              <p className="rounded-xl border border-mint/50 bg-mint/10 px-4 py-3 text-center font-semibold text-mint">
+                🌿 Relaxed game — no points, no winner. All memes are in the gallery.
+              </p>
+            ) : (
+              <>
+                <h3 className="mb-3 text-center text-sm font-bold uppercase tracking-widest text-dim lg:text-left">
+                  Points
+                </h3>
 
-            {podium.length > 0 && (
-              <div className="mb-4 flex flex-wrap items-end justify-center gap-1.5">
-                {podium.map((p) => {
-                  const gold = p.rank === 1
-                  return (
+                {podium.length > 0 && (
+                  <div className="mb-4 flex flex-wrap items-end justify-center gap-1.5">
+                    {podium.map((p) => {
+                      const gold = p.rank === 1
+                      return (
+                        <div
+                          key={p.playerId}
+                          className={`flex flex-1 min-w-20 max-w-36 flex-col items-center justify-end gap-1 rounded-t-xl border px-1 pb-2 pt-3 ${
+                            gold ? 'border-sun/60 bg-gradient-to-b from-sun/20 to-sun/5' : 'border-line bg-night2'
+                          } ${STEP_H[p.rank - 1] ?? 'h-24'}`}
+                        >
+                          <span className={gold ? 'text-3xl' : 'text-2xl'}>{medal(p.rank)}</span>
+                          <Avatar entry={p} size={gold ? 'h-10 w-10 text-base' : 'h-8 w-8 text-sm'} />
+                          <span className="w-full truncate text-center text-xs font-bold">{p.username}</span>
+                          <span className={`text-base font-extrabold tabular-nums ${scoreCls(p.total)}`}>{p.total}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+
+                <div className="grid gap-1.5">
+                  {ranking.map((p) => (
                     <div
                       key={p.playerId}
-                      className={`flex flex-1 min-w-20 max-w-36 flex-col items-center justify-end gap-1 rounded-t-xl border px-1 pb-2 pt-3 ${
-                        gold ? 'border-sun/60 bg-gradient-to-b from-sun/20 to-sun/5' : 'border-line bg-night2'
-                      } ${STEP_H[p.rank - 1] ?? 'h-24'}`}
+                      className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 text-base ${
+                        p.playerId === props.myId
+                          ? p.rank === 1
+                            ? 'border-sun/70 bg-sun/10 ring-1 ring-punch/60'
+                            : 'border-punch/70 bg-punch/10'
+                          : p.rank === 1
+                            ? 'border-sun/60 bg-sun/10'
+                            : 'border-line bg-night2'
+                      }`}
                     >
-                      <span className={gold ? 'text-3xl' : 'text-2xl'}>{medal(p.rank)}</span>
-                      <Avatar entry={p} size={gold ? 'h-10 w-10 text-base' : 'h-8 w-8 text-sm'} />
-                      <span className="w-full truncate text-center text-xs font-bold">{p.username}</span>
-                      <span className={`text-base font-extrabold tabular-nums ${scoreCls(p.total)}`}>{p.total}</span>
+                      <span className="w-6 text-center font-extrabold text-dim">{medal(p.rank)}</span>
+                      <Avatar entry={p} size="h-8 w-8 text-sm" />
+                      <span className="min-w-0 flex-1 truncate font-semibold">
+                        {p.username}
+                        {p.playerId === props.myId && <span className="ml-1 text-xs text-punch">(you)</span>}
+                      </span>
+                      <span className={`text-lg font-extrabold tabular-nums ${scoreCls(p.total)}`}>{p.total}</span>
                     </div>
-                  )
-                })}
-              </div>
-            )}
-
-            <div className="grid gap-1.5">
-              {ranking.map((p) => (
-                <div
-                  key={p.playerId}
-                  className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 text-base ${
-                    p.playerId === props.myId
-                      ? p.rank === 1
-                        ? 'border-sun/70 bg-sun/10 ring-1 ring-punch/60'
-                        : 'border-punch/70 bg-punch/10'
-                      : p.rank === 1
-                        ? 'border-sun/60 bg-sun/10'
-                        : 'border-line bg-night2'
-                  }`}
-                >
-                  <span className="w-6 text-center font-extrabold text-dim">{medal(p.rank)}</span>
-                  <Avatar entry={p} size="h-8 w-8 text-sm" />
-                  <span className="min-w-0 flex-1 truncate font-semibold">
-                    {p.username}
-                    {p.playerId === props.myId && <span className="ml-1 text-xs text-punch">(you)</span>}
-                  </span>
-                  <span className={`text-lg font-extrabold tabular-nums ${scoreCls(p.total)}`}>{p.total}</span>
+                  ))}
                 </div>
-              ))}
-            </div>
+              </>
+            )}
 
             <div className="mt-4">
               {props.isHost ? (

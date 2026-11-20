@@ -11,7 +11,8 @@ import {
   saveUsername,
   type PublicLobbyInfo,
 } from '@/lib/client'
-import { Events, type PackOption } from '@/lib/types'
+import { Events, type GameMode, type PackOption } from '@/lib/types'
+import GameModePicker from '@/components/GameModePicker'
 import { formatDuration } from '@/lib/format'
 import { sounds } from '@/lib/sounds'
 
@@ -42,6 +43,7 @@ export default function StartPage() {
   const [name, setName] = useState('')
   const [isPublic, setIsPublic] = useState(false)
   const [rounds, setRounds] = useState(3)
+  const [mode, setMode] = useState<GameMode>('normal')
   const [rerolls, setRerolls] = useState(10)
   const [captionTime, setCaptionTime] = useState(45)
   const [voteTime, setVoteTime] = useState(10)
@@ -179,10 +181,10 @@ export default function StartPage() {
       ...id,
       isPublic,
       lobbyName: name.trim() || 'Meme Lobby',
-      settings: { rounds, rerolls, captionTime, voteTime, packIds },
+      settings: { mode, rounds, rerolls, captionTime, voteTime, packIds },
     })
     sounds.join()
-  }, [awaitJoin, identity, isPublic, name, packIds, captionTime, rerolls, rounds, voteTime, router])
+  }, [awaitJoin, identity, isPublic, name, packIds, captionTime, mode, rerolls, rounds, voteTime, router])
 
   const togglePack = (id: string) => {
     setPackIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
@@ -283,7 +285,14 @@ export default function StartPage() {
               </label>
             </div>
 
-            <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div>
+              <span className="mb-1 block text-xs font-semibold uppercase tracking-wider text-dim">
+                Game mode
+              </span>
+              <GameModePicker value={mode} onChange={setMode} />
+            </div>
+
+            <div className="mt-3 grid gap-x-6 gap-y-3 sm:grid-cols-2 xl:grid-cols-4">
               <label className="block">
                 <span className="mb-1 flex justify-between text-xs font-semibold uppercase tracking-wider text-dim">
                   Rounds <b className="text-sun">{rounds}</b>

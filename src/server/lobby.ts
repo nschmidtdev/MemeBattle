@@ -1,8 +1,10 @@
 import crypto from 'crypto'
 import type {
   CaptionSubmission,
+  ChaosRule,
   FinalMeme,
   FreeformLine,
+  GameMode,
   GameOverPayload,
   LobbySettings,
   MemeEntry,
@@ -16,13 +18,16 @@ import type {
   VoteValue,
 } from '../lib/types'
 import {
+  CHAOS_RULES,
   DEFAULT_REROLLS,
   Events,
+  GAME_MODES,
   LINE_BOUNDS,
   MAX_LINES,
   MAX_REROLLS,
   MAX_TEXT_LEN,
   ROTATION_BOUNDS,
+  SHORT_TEXT_MAX,
   TEXT_WIDTH_BOUNDS,
 } from '../lib/types'
 import { normalizeMemePadding } from '../lib/meme'
@@ -106,10 +111,30 @@ function normalizePackIds(raw: unknown): string[] {
   return ids
 }
 
+function normalizeMode(raw: unknown): GameMode {
+  return typeof raw === 'string' && (GAME_MODES as readonly string[]).includes(raw)
+    ? (raw as GameMode)
+    : 'normal'
+}
+
+/** Pick a chaos rule, avoiding the previous round's rule when possible. */
+export function pickChaosRule(
+  mode: GameMode,
+  previous: ChaosRule | null,
+  random: () => number = Math.random,
+): ChaosRule | null {
+  if (mode !== 'chaos') return null
+  const options = CHAOS_RULES.filter((rule) => rule !== previous)
+  const pool = options.length > 0 ? options : [...CHAOS_RULES]
+  const index = Math.min(pool.length - 1, Math.floor(random() * pool.length))
+  return pool[Math.max(0, index)]
+}
+
 /** Validate arbitrary client input into safe lobby settings, applying defaults for missing fields. */
 export function normalizeSettings(input: unknown): LobbySettings {
   const raw = typeof input === 'object' && input !== null ? (input as Record<string, unknown>) : {}
   return {
+    mode: normalizeMode(raw.mode),
     rounds: clampInt(raw.rounds, 1, 10, 3),
     rerolls: clampInt(raw.rerolls, 0, MAX_REROLLS, DEFAULT_REROLLS),
     captionTime: clampInt(raw.captionTime, 5, 120, 45),
@@ -148,6 +173,9 @@ export class Lobby {
   // game state
   totalRounds = 0
   round = 0
+  roundRule: ChaosRule | null = null
+  roundCaptionTime = 0
+  roundVoteTime = 0
   templates: TemplateData[] = []
   memes: MemeEntry[] = []
   tallies = new Map<number, VoteTally>()
@@ -443,6 +471,17 @@ export class Lobby {
     this.round = round
     // Reshuffle every round so players do not get the same template each time.
     this.templates = shuffle(this.templates)
+    this.roundRule = this.pickChaosRule()
+    const fast = this.roundRule === 'fast'
+    this.roundCaptionTime = fast
+      ? Math.max(10, Math.round(this.settings.captionTime / 2))
+      : this.settings.captionTime
+    this.roundVoteTime = fast
+      ? Math.max(3, Math.round(this.settings.voteTime / 2))
+      : this.settings.voteTime
+    const relaxed = this.settings.mode === 'relaxed'
+    const maxTextLen = this.roundRule === 'shortText' ? SHORT_TEXT_MAX : MAX_TEXT_LEN
+
     this.players.forEach((pl) => {
       pl.submission = null
       pl.votes = {}
@@ -451,11 +490,16 @@ export class Lobby {
       pl.rerolls = 0
     })
     this.setPhase('caption')
-    this.captionEndsAt = Date.now() + this.settings.captionTime * 1000
+    this.captionEndsAt = Date.now() + this.roundCaptionTime * 1000
     this.hooks.broadcast(Events.PhaseCaption, {
       round,
       totalRounds: this.totalRounds,
-      timeLeft: this.settings.captionTime,
+      timeLeft: this.roundCaptionTime,
+      timeTotal: this.roundCaptionTime,
+      mode: this.settings.mode,
+      rule: this.roundRule,
+      maxTextLen,
+      scoresEnabled: !relaxed,
     })
     this.players.forEach((pl) => {
       const template = this.dealTemplate(pl)
@@ -463,8 +507,13 @@ export class Lobby {
       if (pl.socketId) {
         this.hooks.sendTo(pl.socketId, Events.CaptionTemplate, {
           template,
-          rerollsLeft: this.templates.length > 1 ? this.settings.rerolls : 0,
-          timeLeft: this.settings.captionTime,
+          rerollsLeft: this.canReroll() ? this.settings.rerolls : 0,
+          timeLeft: this.roundCaptionTime,
+          timeTotal: this.roundCaptionTime,
+          mode: this.settings.mode,
+          rule: this.roundRule,
+          maxTextLen,
+          scoresEnabled: !relaxed,
         })
       }
     })
@@ -472,7 +521,15 @@ export class Lobby {
     this.schedule(() => {
       if (this.round !== roundNumber) return
       this.beginVoting()
-    }, this.settings.captionTime * 1000)
+    }, this.roundCaptionTime * 1000)
+  }
+
+  private pickChaosRule(): ChaosRule | null {
+    return pickChaosRule(this.settings.mode, this.roundRule)
+  }
+
+  private canReroll(): boolean {
+    return this.settings.mode === 'normal' && this.templates.length > 1
   }
 
   /** Trade the current template for a different random one (limited per round). */
@@ -480,6 +537,7 @@ export class Lobby {
     const p = this.playerBySocket(socketId)
     if (!p) return 'Unknown player.'
     if (this.phase !== 'caption') return 'Not in the caption phase.'
+    if (this.settings.mode !== 'normal') return 'Template changes are only available in Meme Battle mode.'
     if (p.submission) return 'You already submitted.'
     if (p.rerolls >= this.settings.rerolls) return 'No rerolls left this round.'
     const others = this.templates.filter((t) => t.id !== p.template?.id)
@@ -491,6 +549,11 @@ export class Lobby {
         template: p.template,
         rerollsLeft: this.settings.rerolls - p.rerolls,
         timeLeft: Math.max(0, Math.ceil((this.captionEndsAt - Date.now()) / 1000)),
+        timeTotal: this.roundCaptionTime,
+        mode: this.settings.mode,
+        rule: this.roundRule,
+        maxTextLen: this.roundRule === 'shortText' ? SHORT_TEXT_MAX : MAX_TEXT_LEN,
+        scoresEnabled: true,
       })
     }
     return null
@@ -498,6 +561,8 @@ export class Lobby {
 
   /** Deal a template: i-th player gets templates[i % len] (shuffled each round). */
   private dealTemplate(pl: PlayerState): TemplateData {
+    // Same/relaxed/chaos give everyone the same template for a fair round.
+    if (this.settings.mode !== 'normal') return clone(this.templates[0])
     const idx = [...this.players.values()].indexOf(pl)
     const t = this.templates[idx % this.templates.length]
     return clone(t)
@@ -539,20 +604,27 @@ export class Lobby {
       memes: this.memes,
       count: this.memes.length,
       current: 0,
-      timeLeft: this.settings.voteTime,
+      timeLeft: this.roundVoteTime,
+      timeTotal: this.roundVoteTime,
+      mode: this.settings.mode,
+      rule: this.roundRule,
+      scoresEnabled: this.settings.mode !== 'relaxed',
+      canDownvote: this.roundRule !== 'noDownvotes',
     })
     this.showMeme(0)
   }
 
   private showMeme(index: number) {
     this.currentMeme = index
-    this.memeSwitchAt = Date.now() + this.settings.voteTime * 1000
+    this.memeSwitchAt = Date.now() + this.roundVoteTime * 1000
     this.hooks.broadcast(Events.VotingProgress, {
       index,
       count: this.memes.length,
-      timeLeft: this.settings.voteTime,
+      timeLeft: this.roundVoteTime,
+      timeTotal: this.roundVoteTime,
+      canDownvote: this.roundRule !== 'noDownvotes',
     })
-    this.schedule(() => this.advanceMeme(index), this.settings.voteTime * 1000)
+    this.schedule(() => this.advanceMeme(index), this.roundVoteTime * 1000)
     // If nobody can vote on this meme, still show it briefly instead of waiting
     // the full vote time.
     this.maybeShortenVoting()
@@ -597,31 +669,47 @@ export class Lobby {
 
   private endVoting() {
     this.clearTimers()
+    const relaxed = this.settings.mode === 'relaxed'
+    const multiplier = this.roundRule === 'double' ? 2 : 1
     const voteScored = this.memes.map((meme, index) => {
       const votes = this.tallies.get(index) ?? { up: 0, down: 0, meh: 0 }
-      return { meme, index, votes, voteScore: computeScore(votes) }
+      return {
+        meme,
+        index,
+        votes,
+        voteScore: relaxed ? 0 : computeScore(votes) * multiplier,
+      }
     })
 
     // Only picks that resolve to another player's meme count. pickBuddy already
     // guarantees this; the check also protects against stale picks after a kick.
+    // Relaxed rounds have no scoring, so they ignore Buddy picks entirely.
     const buddyPicks: Array<{ picker: PlayerState; index: number }> = []
     const buddyPlayerIds: string[][] = this.memes.map(() => [])
-    for (const pl of this.players.values()) {
-      const index = pl.buddyIndex
-      if (index === null) continue
-      const meme = Number.isInteger(index) ? this.memes[index] : undefined
-      if (!meme || meme.playerId === pl.id) continue
-      buddyPicks.push({ picker: pl, index })
-      buddyPlayerIds[index].push(pl.id)
+    if (!relaxed) {
+      for (const pl of this.players.values()) {
+        const index = pl.buddyIndex
+        if (index === null) continue
+        const meme = Number.isInteger(index) ? this.memes[index] : undefined
+        if (!meme || meme.playerId === pl.id) continue
+        buddyPicks.push({ picker: pl, index })
+        buddyPlayerIds[index].push(pl.id)
+      }
     }
     const picks: BuddyPickInput[] = buddyPicks.map(({ picker, index }) => ({
       playerId: picker.id,
       index,
     }))
-    const { memeScores, memeBuddyCounts, pickerBonuses } = computeBuddyOutcome(
-      voteScored.map((entry) => entry.voteScore),
-      picks,
-    )
+    const { memeScores, memeBuddyCounts, pickerBonuses } = relaxed
+      ? {
+          memeScores: voteScored.map(() => 0),
+          memeBuddyCounts: voteScored.map(() => 0),
+          pickerBonuses: {} as Record<string, number>,
+        }
+      : computeBuddyOutcome(
+          voteScored.map((entry) => entry.voteScore),
+          picks,
+        )
     const scored = voteScored.map((entry, index) => ({
       ...entry,
       score: memeScores[index],
@@ -658,6 +746,8 @@ export class Lobby {
 
     const result: RoundResult = {
       round: this.round,
+      gameMode: this.settings.mode,
+      rule: this.roundRule,
       memes: scored.map(({ meme, index, votes, voteScore, score, buddyBonus, buddyCount, buddyPlayerIds: ids }) => ({
         index,
         playerId: meme.playerId,
@@ -737,7 +827,12 @@ export class Lobby {
     }))
     this.ranking = ranking
     this.setPhase('gameOver')
-    const payload: GameOverPayload = { ranking, totalRounds: this.totalRounds, memes: this.finalMemes }
+    const payload: GameOverPayload = {
+      ranking,
+      totalRounds: this.totalRounds,
+      memes: this.finalMemes,
+      gameMode: this.settings.mode,
+    }
     this.hooks.broadcast(Events.GameOver, payload)
   }
 
@@ -747,6 +842,9 @@ export class Lobby {
     if (this.phase !== 'gameOver') return 'The game is not over yet.'
     this.phase = 'lobby'
     this.round = 0
+    this.roundRule = null
+    this.roundCaptionTime = 0
+    this.roundVoteTime = 0
     this.memes = []
     this.tallies = new Map()
     this.finalMemes = []
@@ -770,13 +868,14 @@ export class Lobby {
     if (this.phase !== 'caption') return 'Not in the caption phase.'
     if (p.submission) return 'You already submitted.'
 
+    const maxTextLen = this.roundRule === 'shortText' ? SHORT_TEXT_MAX : MAX_TEXT_LEN
     const texts: Record<string, string> = {}
     const raw = typeof submission?.texts === 'object' && submission.texts ? submission.texts : {}
     let textCount = 0
     for (const [k, v] of Object.entries(raw)) {
       if (typeof v !== 'string') continue
       if (textCount++ >= MAX_LINES) break
-      texts[k.slice(0, 64)] = v.slice(0, MAX_TEXT_LEN)
+      texts[k.slice(0, 64)] = v.slice(0, maxTextLen)
     }
     let lines: FreeformLine[] = []
     if (Array.isArray(submission?.lines)) {
@@ -785,7 +884,7 @@ export class Lobby {
         .slice(0, MAX_LINES)
         .map((b) => ({
           id: String(b.id ?? '').slice(0, 32) || crypto.randomUUID(),
-          text: String(b.text).slice(0, MAX_TEXT_LEN),
+          text: String(b.text).slice(0, maxTextLen),
           x: clampNum(b.x, LINE_BOUNDS.xMin, LINE_BOUNDS.xMax),
           y: clampNum(b.y, LINE_BOUNDS.yMin, LINE_BOUNDS.yMax),
           w: clampNum(b.w, TEXT_WIDTH_BOUNDS.min, TEXT_WIDTH_BOUNDS.max),
@@ -817,6 +916,7 @@ export class Lobby {
     if (!p.submission) return 'You did not submit a meme this round.'
     if (index < 0 || index >= this.memes.length) return 'Unknown meme.'
     if (value !== 'up' && value !== 'down' && value !== 'meh') return 'Invalid vote.'
+    if (value === 'down' && this.roundRule === 'noDownvotes') return 'Downvotes are disabled this round.'
     if (index !== this.currentMeme) return 'This meme is not up for voting.'
     const meme = this.memes[index]
     if (!meme || meme.playerId === p.id) return 'You cannot vote on your own meme.'
@@ -843,6 +943,7 @@ export class Lobby {
     const p = this.playerBySocket(socketId)
     if (!p) return 'Unknown player.'
     if (this.phase !== 'voting') return 'Not in the voting phase.'
+    if (this.settings.mode === 'relaxed') return 'Meme Buddy is disabled in relaxed mode.'
     if (!p.submission) return 'You did not submit a meme this round.'
     if (!Number.isInteger(index) || index < 0 || index >= this.memes.length) return 'Unknown meme.'
     if (index !== this.currentMeme) return 'This meme is not up for voting.'
@@ -877,13 +978,19 @@ export class Lobby {
       const template = pl?.template ?? null
       send(Events.CaptionTemplate, {
         template,
-        rerollsLeft:
-          this.templates.length > 1 ? Math.max(0, this.settings.rerolls - (pl?.rerolls ?? 0)) : 0,
+        rerollsLeft: this.canReroll()
+          ? Math.max(0, this.settings.rerolls - (pl?.rerolls ?? 0))
+          : 0,
         timeLeft: Math.max(0, Math.ceil((this.captionEndsAt - Date.now()) / 1000)),
+        timeTotal: this.roundCaptionTime,
         round: this.round,
         totalRounds: this.totalRounds,
         submitted: !!pl?.submission,
         submission: pl?.submission ? clone(pl.submission) : null,
+        mode: this.settings.mode,
+        rule: this.roundRule,
+        maxTextLen: this.roundRule === 'shortText' ? SHORT_TEXT_MAX : MAX_TEXT_LEN,
+        scoresEnabled: this.settings.mode !== 'relaxed',
       })
     } else if (this.phase === 'voting') {
       const pl = this.players.get(playerId)
@@ -893,6 +1000,11 @@ export class Lobby {
         count: this.memes.length,
         current: this.currentMeme,
         timeLeft: Math.max(0, Math.ceil((this.memeSwitchAt - Date.now()) / 1000)),
+        timeTotal: this.roundVoteTime,
+        mode: this.settings.mode,
+        rule: this.roundRule,
+        scoresEnabled: this.settings.mode !== 'relaxed',
+        canDownvote: this.roundRule !== 'noDownvotes',
         // Only the resuming socket gets its own votes and buddy pick back; tallies stay secret.
         votes: pl?.votes ?? {},
         buddyIndex: pl?.buddyIndex ?? null,
@@ -904,6 +1016,7 @@ export class Lobby {
         ranking: this.ranking,
         totalRounds: this.totalRounds,
         memes: this.finalMemes,
+        gameMode: this.settings.mode,
       }
       send(Events.GameOver, payload)
     }

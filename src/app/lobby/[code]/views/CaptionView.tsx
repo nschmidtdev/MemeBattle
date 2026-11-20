@@ -1,8 +1,16 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import type { CaptionSubmission, FreeformLine, MemePadding, TemplateData } from '@/lib/types'
+import type {
+  CaptionSubmission,
+  ChaosRule,
+  FreeformLine,
+  GameMode,
+  MemePadding,
+  TemplateData,
+} from '@/lib/types'
 import { clampFreeformLine, normalizeMemePadding } from '@/lib/meme'
+import { MODE_INFO, RULE_INFO } from '@/lib/modes'
 import FreeformEditor from './FreeformEditor'
 
 const NO_PADDING: MemePadding = { top: 0, bottom: 0 }
@@ -12,6 +20,9 @@ interface Props {
   round: number
   totalRounds: number
   rerollsLeft: number
+  mode: GameMode
+  rule: ChaosRule | null
+  maxTextLen: number
   onReroll: () => void
   onSubmit: (submission: CaptionSubmission) => void
   /** Controlled by the parent so a reconnected player resumes read-only. */
@@ -48,6 +59,9 @@ export default function CaptionView({
   round,
   totalRounds,
   rerollsLeft,
+  mode,
+  rule,
+  maxTextLen,
   onReroll,
   onSubmit,
   submitted,
@@ -123,6 +137,7 @@ export default function CaptionView({
   }
 
   const hasText = lines.some((l) => l.text.trim() !== '')
+  const canReroll = mode === 'normal' && rerollsLeft > 0
 
   const submit = () => {
     if (isSubmitted || rerollPending || !hasText) return
@@ -134,7 +149,7 @@ export default function CaptionView({
   }
 
   const reroll = () => {
-    if (isSubmitted || rerollPending || rerollsLeft <= 0) return
+    if (isSubmitted || rerollPending || !canReroll) return
     setRerollPending(true)
     onReroll()
   }
@@ -153,16 +168,18 @@ export default function CaptionView({
           )}
           <button
             className="min-h-11 rounded-full border border-sky/60 px-4 py-2 text-sm font-bold text-sky transition hover:bg-sky/10 disabled:cursor-default disabled:opacity-40"
-            disabled={isSubmitted || rerollPending || rerollsLeft <= 0}
+            disabled={isSubmitted || rerollPending || !canReroll}
             aria-busy={rerollPending}
             title={
               isSubmitted
                 ? 'Already submitted'
                 : rerollPending
                   ? 'Loading a new template…'
-                  : rerollsLeft > 0
-                    ? 'Trade this template for a different one'
-                    : 'No rerolls left this round'
+                  : mode !== 'normal'
+                    ? 'Template changes are only available in Meme Battle mode'
+                    : canReroll
+                      ? 'Trade this template for a different one'
+                      : 'No rerolls left this round'
             }
             onClick={reroll}
           >
@@ -170,6 +187,24 @@ export default function CaptionView({
           </button>
         </div>
       </header>
+
+      {(mode !== 'normal' || rule) && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-night2 px-3 py-2">
+          {mode !== 'normal' && (
+            <span className="rounded-full border border-punch/50 bg-punch/10 px-2.5 py-1 text-xs font-bold text-punch">
+              {mode === 'chaos' ? '🌀 Chaos' : MODE_INFO[mode].name}
+            </span>
+          )}
+          {rule && (
+            <span className="rounded-full border border-sun/60 bg-sun/10 px-2.5 py-1 text-xs font-bold text-sun">
+              {RULE_INFO[rule].emoji} {RULE_INFO[rule].label}
+            </span>
+          )}
+          <span className="text-xs text-dim">
+            {rule ? RULE_INFO[rule].description : MODE_INFO[mode].description}
+          </span>
+        </div>
+      )}
 
       <div className="rounded-2xl border border-line bg-card p-3 shadow-xl sm:p-4">
         {isSubmitted && (
@@ -185,6 +220,7 @@ export default function CaptionView({
           disabled={isSubmitted}
           padding={padding}
           onPaddingChange={setPadding}
+          maxTextLen={maxTextLen}
         />
 
         <div className="mt-4 border-t border-line pt-4">
