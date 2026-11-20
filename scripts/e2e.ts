@@ -25,7 +25,10 @@ function ok(name: string, cond: boolean, extra?: unknown) {
     console.log(`  PASS  ${name}`)
   } else {
     failed++
-    console.log(`  FAIL  ${name}${extra !== undefined ? ` -> ${JSON.stringify(extra)}` : ''}`)
+    const line = `FAIL  ${name}${extra !== undefined ? ` -> ${JSON.stringify(extra)}` : ''}`
+    console.log(`  ${line}`)
+    // GitHub Actions annotation: visible on the job page even without log access.
+    console.log(`::error::E2E ${line.replace(/\r?\n/g, ' ')}`)
   }
 }
 
@@ -1726,6 +1729,7 @@ async function runSuite() {
 async function main() {
   const globalTimer = setTimeout(() => {
     console.error(`\nE2E global timeout after ${GLOBAL_TIMEOUT_MS} ms`)
+    console.log('::error::E2E global timeout')
     process.exit(1)
   }, GLOBAL_TIMEOUT_MS)
 
@@ -1733,6 +1737,7 @@ async function main() {
     await runSuite()
   } catch (e) {
     console.error('E2E crashed:', e)
+    console.log(`::error::E2E crashed: ${e instanceof Error ? e.message : String(e)}`)
     failed++
   } finally {
     await cleanup()
@@ -1740,6 +1745,7 @@ async function main() {
   }
 
   console.log(`\n${passed} passed, ${failed} failed`)
+  if (failed > 0) console.log(`::error::E2E result: ${passed} passed, ${failed} failed`)
   process.exit(failed > 0 ? 1 : 0)
 }
 
