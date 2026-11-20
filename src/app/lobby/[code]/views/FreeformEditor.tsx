@@ -18,6 +18,8 @@ import {
   isLightTextColor,
   memeFontFamily,
   memeFontWeight,
+  resizeFreeformLine,
+  type MemeResizeHandle,
 } from '@/lib/meme'
 import { randomId } from '@/lib/client'
 
@@ -45,6 +47,35 @@ const NEW_LINE: Omit<FreeformLine, 'id'> = {
 
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v))
 
+type ResizeHandle = MemeResizeHandle
+
+/** Eight Windows-style handles around the selected text block. */
+const RESIZE_HANDLES: Array<{
+  id: ResizeHandle
+  left: string
+  top: string
+  cursor: string
+}> = [
+  { id: 'nw', left: '0%', top: '0%', cursor: 'nwse-resize' },
+  { id: 'n', left: '50%', top: '0%', cursor: 'ns-resize' },
+  { id: 'ne', left: '100%', top: '0%', cursor: 'nesw-resize' },
+  { id: 'e', left: '100%', top: '50%', cursor: 'ew-resize' },
+  { id: 'se', left: '100%', top: '100%', cursor: 'nwse-resize' },
+  { id: 's', left: '50%', top: '100%', cursor: 'ns-resize' },
+  { id: 'sw', left: '0%', top: '100%', cursor: 'nesw-resize' },
+  { id: 'w', left: '0%', top: '50%', cursor: 'ew-resize' },
+]
+
+interface ResizeState {
+  id: string
+  handle: ResizeHandle
+  pointerX: number
+  pointerY: number
+  line: Pick<FreeformLine, 'x' | 'y' | 'w' | 'fontSize' | 'rotation'>
+  stageW: number
+  stageH: number
+}
+
 /**
  * WYSIWYG meme editor: text lines are rendered directly on the template image
  * (same font stack, weight, wrapping and line height the canvas render uses)
@@ -62,6 +93,7 @@ export default function FreeformEditor({
   const [lastDeleted, setLastDeleted] = useState<{ line: FreeformLine; index: number } | null>(null)
   const stageRef = useRef<HTMLDivElement | null>(null)
   const dragRef = useRef<{ id: string; dx: number; dy: number } | null>(null)
+  const resizeRef = useRef<ResizeState | null>(null)
   const [stageH, setStageH] = useState(320)
   const [imageSize, setImageSize] = useState<{ key: string; width: number; height: number } | null>(null)
 
@@ -187,6 +219,14 @@ export default function FreeformEditor({
   }
 
   const onPointerMove = (e: React.PointerEvent) => {
+    const resize = resizeRef.current
+    if (resize) {
+      const dx = (e.clientX - resize.pointerX) / resize.stageW
+      const dy = (e.clientY - resize.pointerY) / resize.stageH
+      update(resize.id, resizeFreeformLine(resize.line, resize.handle, dx, dy))
+      return
+    }
+
     const drag = dragRef.current
     if (!drag) return
     const point = stagePoint(e.clientX, e.clientY)
@@ -197,8 +237,45 @@ export default function FreeformEditor({
     })
   }
 
+  const onResizePointerDown = (
+    e: React.PointerEvent,
+    line: FreeformLine,
+    handle: ResizeHandle,
+  ) => {
+    if (disabled) return
+    e.preventDefault()
+    e.stopPropagation()
+    setSelectedId(line.id)
+    const el = stageRef.current
+    if (!el) return
+    const stageW = el.clientWidth
+    const stageH = el.clientHeight
+    if (!stageW || !stageH) return
+    try {
+      ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    } catch {
+      // Older browsers: stage pointermove still handles the drag.
+    }
+    resizeRef.current = {
+      id: line.id,
+      handle,
+      pointerX: e.clientX,
+      pointerY: e.clientY,
+      line: {
+        x: line.x,
+        y: line.y,
+        w: line.w,
+        fontSize: line.fontSize,
+        rotation: line.rotation,
+      },
+      stageW,
+      stageH,
+    }
+  }
+
   const endDrag = () => {
     dragRef.current = null
+    resizeRef.current = null
   }
 
   const addLine = () => {
@@ -255,69 +332,17 @@ export default function FreeformEditor({
   const labelCls = 'flex min-h-11 items-center gap-2 text-xs text-dim'
 
   return (
-    <div>
-      {/* ------------------------------------------------------ whitespace */}
-      <div className="mb-3 rounded-xl border border-line bg-night2 p-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-xs font-semibold text-dim">
-            Canvas whitespace
-            <span className="ml-2 font-normal">0–100% of the image height per side</span>
-          </span>
-          {(padTopRatio > 0 || padBottomRatio > 0) && (
-            <button
-              type="button"
-              className="text-xs font-semibold text-dim underline hover:text-ink disabled:opacity-40"
-              disabled={disabled}
-              onClick={() => onPaddingChange({ top: 0, bottom: 0 })}
-            >
-              Clear
-            </button>
-          )}
-        </div>
-        <div className="mt-2 grid gap-2 sm:grid-cols-2">
-          <label className="flex items-center gap-2 text-xs text-dim">
-            <span className="w-12 font-semibold">Top</span>
-            <input
-              type="range"
-              min={0}
-              max={100}
-              step={1}
-              value={Math.round(padTopRatio * 100)}
-              disabled={disabled}
-              aria-valuetext={`${Math.round(padTopRatio * 100)} percent of the image height`}
-              className="min-w-0 flex-1 accent-punch disabled:opacity-40"
-              onChange={(event) =>
-                onPaddingChange({ ...padding, top: Number(event.target.value) / 100 })
-              }
-            />
-            <span className="w-9 text-right tabular-nums">{Math.round(padTopRatio * 100)}%</span>
-          </label>
-          <label className="flex items-center gap-2 text-xs text-dim">
-            <span className="w-12 font-semibold">Bottom</span>
-            <input
-              type="range"
-              min={0}
-              max={100}
-              step={1}
-              value={Math.round(padBottomRatio * 100)}
-              disabled={disabled}
-              aria-valuetext={`${Math.round(padBottomRatio * 100)} percent of the image height`}
-              className="min-w-0 flex-1 accent-punch disabled:opacity-40"
-              onChange={(event) =>
-                onPaddingChange({ ...padding, bottom: Number(event.target.value) / 100 })
-              }
-            />
-            <span className="w-9 text-right tabular-nums">{Math.round(padBottomRatio * 100)}%</span>
-          </label>
-        </div>
-      </div>
-
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_400px] lg:items-start">
+      <div className="min-w-0 lg:sticky lg:top-4">
       {/* ---------------------------------------------------------- stage */}
       <div
         ref={stageRef}
-        className="relative mx-auto w-full max-w-xl select-none overflow-hidden rounded-2xl border border-line bg-black shadow-2xl"
+        className="relative mx-auto w-full max-w-2xl select-none overflow-hidden rounded-2xl border border-line bg-black shadow-2xl"
         style={{
           aspectRatio: `${imageW} / ${imageH * totalRatio}`,
+          // Keep the whole meme above the fold on landscape laptops; the
+          // height budget accounts for the header, hint and page padding.
+          maxWidth: `min(42rem, calc((100dvh - 10rem) * ${imageW / (imageH * totalRatio)}))`,
           cursor: disabled ? 'default' : 'crosshair',
         }}
         onPointerDown={() => {
@@ -400,6 +425,26 @@ export default function FreeformEditor({
               ) : (
                 <span style={{ WebkitTextStroke: '0px', opacity: 0.45, fontWeight: 700 }}>+ text</span>
               )}
+              {selected && !disabled && (
+                <>
+                  {RESIZE_HANDLES.map((h) => (
+                    <span
+                      key={h.id}
+                      aria-hidden
+                      onPointerDown={(e) => onResizePointerDown(e, l, h.id)}
+                      className="absolute z-20 flex h-7 w-7 touch-none items-center justify-center"
+                      style={{
+                        left: h.left,
+                        top: h.top,
+                        transform: 'translate(-50%, -50%)',
+                        cursor: h.cursor,
+                      }}
+                    >
+                      <span className="h-2.5 w-2.5 rounded-sm border border-sky bg-night shadow" />
+                    </span>
+                  ))}
+                </>
+              )}
             </div>
           )
         })}
@@ -407,11 +452,71 @@ export default function FreeformEditor({
       <p className="mt-2 text-center text-xs text-dim">
         {disabled
           ? 'Locked — your meme is in.'
-          : 'Drag texts on the meme · click a card to style · arrow keys nudge the selected text'}
+          : 'Drag texts · resize with the corner/edge handles · arrow keys nudge the selected text'}
       </p>
 
+      </div>
+
+      {/* ---------------------------------------------------------- controls */}
+      <div className="grid min-w-0 gap-2 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto lg:overscroll-contain lg:pr-1">
+      {/* ------------------------------------------------------ whitespace */}
+      <div className="rounded-xl border border-line bg-night2 p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-xs font-semibold text-dim">
+            Canvas whitespace
+            <span className="ml-2 font-normal">0–100% of the image height per side</span>
+          </span>
+          {(padTopRatio > 0 || padBottomRatio > 0) && (
+            <button
+              type="button"
+              className="text-xs font-semibold text-dim underline hover:text-ink disabled:opacity-40"
+              disabled={disabled}
+              onClick={() => onPaddingChange({ top: 0, bottom: 0 })}
+            >
+              Clear
+            </button>
+          )}
+        </div>
+        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+          <label className="flex items-center gap-2 text-xs text-dim">
+            <span className="w-12 font-semibold">Top</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={1}
+              value={Math.round(padTopRatio * 100)}
+              disabled={disabled}
+              aria-valuetext={`${Math.round(padTopRatio * 100)} percent of the image height`}
+              className="min-w-0 flex-1 accent-punch disabled:opacity-40"
+              onChange={(event) =>
+                onPaddingChange({ ...padding, top: Number(event.target.value) / 100 })
+              }
+            />
+            <span className="w-9 text-right tabular-nums">{Math.round(padTopRatio * 100)}%</span>
+          </label>
+          <label className="flex items-center gap-2 text-xs text-dim">
+            <span className="w-12 font-semibold">Bottom</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={1}
+              value={Math.round(padBottomRatio * 100)}
+              disabled={disabled}
+              aria-valuetext={`${Math.round(padBottomRatio * 100)} percent of the image height`}
+              className="min-w-0 flex-1 accent-punch disabled:opacity-40"
+              onChange={(event) =>
+                onPaddingChange({ ...padding, bottom: Number(event.target.value) / 100 })
+              }
+            />
+            <span className="w-9 text-right tabular-nums">{Math.round(padBottomRatio * 100)}%</span>
+          </label>
+        </div>
+      </div>
+
       {/* ---------------------------------------------------------- line cards */}
-      <div className="mt-3 grid gap-2">
+      <div className="grid gap-2">
         {lines.map((l, i) => {
           const sel = selectedId === l.id
           return (
@@ -599,13 +704,14 @@ export default function FreeformEditor({
       {!disabled && (
         <button
           type="button"
-          className="mt-3 w-full rounded-xl border-2 border-dashed border-line py-3 text-sm font-semibold text-dim transition hover:border-punch hover:text-punch disabled:opacity-40"
+          className="mt-1 w-full rounded-xl border-2 border-dashed border-line py-3 text-sm font-semibold text-dim transition hover:border-punch hover:text-punch disabled:opacity-40"
           disabled={lines.length >= MAX_LINES}
           onClick={addLine}
         >
           + Add text {lines.length >= MAX_LINES ? `(max ${MAX_LINES})` : `(${lines.length}/${MAX_LINES})`}
         </button>
       )}
+      </div>
     </div>
   )
 }

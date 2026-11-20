@@ -24,6 +24,11 @@ meme-maker wins. No accounts, no filters, no mercy.
 - **Custom memes** — admins can create packs and upload template images. Players
   edit every meme in a WYSIWYG editor: pre-placed text boxes are just starting
   positions — move, restyle, delete and add as many texts as you like.
+- **Windows-style text editing** — drag texts and resize them from eight corner
+  and edge handles; no need to scroll to sliders. On landscape screens the meme
+  and the controls sit side by side with independent scrolling.
+- **Configurable rerolls** — 0–20 replacement templates per player and round
+  (default 10).
 - **White text boxes** — any text line can get an opaque white background (very
   light text automatically switches to dark) so captions stay readable on busy
   templates.
@@ -183,9 +188,11 @@ ADMIN_EMAIL=admin@localhost ADMIN_PASSWORD="your-dev-password" npx tsx scripts/e
 ## How to play
 
 1. Enter a name and create a lobby (or join one by code).
-2. Pick the template packs, rounds, and timer lengths (host only).
+2. Pick the template packs, rounds, rerolls, and timer lengths (host only).
 3. When the round starts, everyone gets one template — caption it before time runs
-   out. Once **everyone** has submitted, voting starts right away.
+   out. Drag texts, resize them from the handles, and reroll the template up to the
+   lobby's limit (default 10 per round). Once **everyone** has submitted, voting
+   starts right away.
 4. Memes are shown one at a time; upvote, downvote, or "meh". Votes are synced and
    can be changed while the meme is on screen. Once per round you can also make
    one other player's meme your **Meme Buddy** (not your own): you get half of its

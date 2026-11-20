@@ -6,8 +6,10 @@ export type TextAlign = 'left' | 'center' | 'right'
 // Gameplay limits (shared by server validation and client editors)
 // ---------------------------------------------------------------------------
 
-/** Template rerolls per player and round (caption phase). */
-export const MAX_REROLLS = 3
+/** Hard cap for template rerolls per player and round (caption phase). */
+export const MAX_REROLLS = 20
+/** Default number of rerolls for new lobbies. */
+export const DEFAULT_REROLLS = 10
 /** Maximum number of freeform text lines per submission. */
 export const MAX_LINES = 12
 /** Maximum length of a single caption text or freeform line. */
@@ -219,6 +221,8 @@ export interface RoundResult {
 
 export interface LobbySettings {
   rounds: number
+  /** Template rerolls per player and round (0..MAX_REROLLS). */
+  rerolls: number
   captionTime: number // seconds
   voteTime: number // seconds per meme during voting
   packIds: string[]

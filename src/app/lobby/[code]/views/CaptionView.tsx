@@ -140,7 +140,7 @@ export default function CaptionView({
   }
 
   return (
-    <section className="mx-auto max-w-2xl">
+    <section className="mx-auto w-full max-w-2xl lg:max-w-6xl">
       <header className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h2 className="font-display text-2xl uppercase tracking-wide">
           Round <span className="text-sun">{round}</span> / {totalRounds}

@@ -16,6 +16,7 @@ import type {
   VoteValue,
 } from '../lib/types'
 import {
+  DEFAULT_REROLLS,
   Events,
   LINE_BOUNDS,
   MAX_LINES,
@@ -110,6 +111,7 @@ export function normalizeSettings(input: unknown): LobbySettings {
   const raw = typeof input === 'object' && input !== null ? (input as Record<string, unknown>) : {}
   return {
     rounds: clampInt(raw.rounds, 1, 10, 3),
+    rerolls: clampInt(raw.rerolls, 0, MAX_REROLLS, DEFAULT_REROLLS),
     captionTime: clampInt(raw.captionTime, 5, 120, 45),
     voteTime: clampInt(raw.voteTime, 3, 60, 10),
     packIds: normalizePackIds(raw.packIds),
@@ -461,7 +463,7 @@ export class Lobby {
       if (pl.socketId) {
         this.hooks.sendTo(pl.socketId, Events.CaptionTemplate, {
           template,
-          rerollsLeft: this.templates.length > 1 ? MAX_REROLLS : 0,
+          rerollsLeft: this.templates.length > 1 ? this.settings.rerolls : 0,
           timeLeft: this.settings.captionTime,
         })
       }
@@ -479,7 +481,7 @@ export class Lobby {
     if (!p) return 'Unknown player.'
     if (this.phase !== 'caption') return 'Not in the caption phase.'
     if (p.submission) return 'You already submitted.'
-    if (p.rerolls >= MAX_REROLLS) return 'No rerolls left this round.'
+    if (p.rerolls >= this.settings.rerolls) return 'No rerolls left this round.'
     const others = this.templates.filter((t) => t.id !== p.template?.id)
     if (others.length === 0) return 'No other template available.'
     p.template = clone(others[Math.floor(Math.random() * others.length)])
@@ -487,7 +489,7 @@ export class Lobby {
     if (p.socketId) {
       this.hooks.sendTo(p.socketId, Events.CaptionTemplate, {
         template: p.template,
-        rerollsLeft: MAX_REROLLS - p.rerolls,
+        rerollsLeft: this.settings.rerolls - p.rerolls,
         timeLeft: Math.max(0, Math.ceil((this.captionEndsAt - Date.now()) / 1000)),
       })
     }
@@ -876,7 +878,7 @@ export class Lobby {
       send(Events.CaptionTemplate, {
         template,
         rerollsLeft:
-          this.templates.length > 1 ? Math.max(0, MAX_REROLLS - (pl?.rerolls ?? 0)) : 0,
+          this.templates.length > 1 ? Math.max(0, this.settings.rerolls - (pl?.rerolls ?? 0)) : 0,
         timeLeft: Math.max(0, Math.ceil((this.captionEndsAt - Date.now()) / 1000)),
         round: this.round,
         totalRounds: this.totalRounds,

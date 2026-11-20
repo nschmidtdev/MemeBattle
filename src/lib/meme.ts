@@ -87,6 +87,54 @@ export function clampFreeformLine(line: FreeformLine): FreeformLine {
   }
 }
 
+export type MemeResizeHandle = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
+
+/**
+ * Resize a text block from one of eight handles, Windows-style: the opposite
+ * edge/corner stays put while the dragged one follows the pointer. `dx`/`dy`
+ * are pointer deltas as fractions of the stage width/height. Width grows from
+ * the left/right edges and font size from the top/bottom edges, so corner
+ * handles change both. Handles on a rotated text use the block's local axes.
+ */
+export function resizeFreeformLine(
+  line: Pick<FreeformLine, 'x' | 'y' | 'w' | 'fontSize' | 'rotation'>,
+  handle: MemeResizeHandle,
+  dx: number,
+  dy: number,
+): Pick<FreeformLine, 'x' | 'y' | 'w' | 'fontSize'> {
+  const rad = ((Number.isFinite(line.rotation) ? line.rotation : 0) * Math.PI) / 180
+  const cos = Math.cos(rad)
+  const sin = Math.sin(rad)
+  const localX = dx * cos + dy * sin
+  const localY = -dx * sin + dy * cos
+  const signX = handle.includes('e') ? 1 : handle.includes('w') ? -1 : 0
+  const signY = handle.includes('s') ? 1 : handle.includes('n') ? -1 : 0
+
+  const w = signX
+    ? clampMemeValue(line.w + localX * signX, TEXT_WIDTH_BOUNDS.min, TEXT_WIDTH_BOUNDS.max)
+    : line.w
+  const fontSize = signY
+    ? clampMemeValue(
+        line.fontSize + localY * signY,
+        LINE_BOUNDS.fontSizeMin,
+        LINE_BOUNDS.fontSizeMax,
+      )
+    : line.fontSize
+
+  // Keep the opposite edge fixed by moving the centre half the size change.
+  const shiftX = (signX * (w - line.w)) / 2
+  const shiftY = (signY * (fontSize - line.fontSize)) / 2
+  const stageDx = shiftX * cos - shiftY * sin
+  const stageDy = shiftX * sin + shiftY * cos
+
+  return {
+    x: clampMemeValue(line.x + stageDx, LINE_BOUNDS.xMin, LINE_BOUNDS.xMax),
+    y: clampMemeValue(line.y + stageDy, LINE_BOUNDS.yMin, LINE_BOUNDS.yMax),
+    w,
+    fontSize,
+  }
+}
+
 /**
  * Family stack shared by the DOM editor and the canvas renderer.
  * Impact is mapped to the bundled Anton face (with Impact as fallback).

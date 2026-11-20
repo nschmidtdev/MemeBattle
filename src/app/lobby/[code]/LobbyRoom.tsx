@@ -451,7 +451,11 @@ export default function LobbyRoom({ code }: { code: string }) {
   return (
     <div
       className={`mx-auto px-3 pb-16 sm:px-4 ${
-        state?.phase === 'gameOver' || state?.phase === 'roundResults' ? 'max-w-6xl' : 'max-w-4xl'
+        state?.phase === 'gameOver' ||
+        state?.phase === 'roundResults' ||
+        state?.phase === 'caption'
+          ? 'max-w-6xl'
+          : 'max-w-4xl'
       }`}
     >
       {/* ------------------------------------------------------------ top bar */}

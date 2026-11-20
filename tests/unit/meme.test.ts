@@ -6,6 +6,7 @@ import {
   isLightTextColor,
   memeCanvasLayout,
   normalizeMemePadding,
+  resizeFreeformLine,
 } from '../../src/lib/meme'
 import type { CaptionSubmission, FreeformLine, TemplateBox, TemplateData } from '../../src/lib/types'
 
@@ -151,6 +152,51 @@ describe('isAnimatedImage', () => {
     expect(isAnimatedImage('https://example.test/seed.svg')).toBe(false)
     expect(isAnimatedImage(undefined)).toBe(false)
     expect(isAnimatedImage('')).toBe(false)
+  })
+})
+
+describe('resizeFreeformLine', () => {
+  const line = { x: 0.5, y: 0.5, w: 0.5, fontSize: 0.08, rotation: 0 }
+
+  it('resizes width from left/right edges and font size from top/bottom edges', () => {
+    expect(resizeFreeformLine(line, 'e', 0.1, 0)).toEqual({ x: 0.55, y: 0.5, w: 0.6, fontSize: 0.08 })
+    expect(resizeFreeformLine(line, 'w', 0.1, 0)).toEqual({ x: 0.55, y: 0.5, w: 0.4, fontSize: 0.08 })
+    expect(resizeFreeformLine(line, 's', 0, 0.01)).toEqual({ x: 0.5, y: 0.505, w: 0.5, fontSize: 0.09 })
+    expect(resizeFreeformLine(line, 'n', 0, 0.01)).toEqual({ x: 0.5, y: 0.505, w: 0.5, fontSize: 0.07 })
+  })
+
+  it('changes width and font size together on a corner handle', () => {
+    expect(resizeFreeformLine(line, 'se', 0.05, 0.01)).toEqual({
+      x: 0.525,
+      y: 0.505,
+      w: 0.55,
+      fontSize: 0.09,
+    })
+    expect(resizeFreeformLine(line, 'nw', 0.05, 0.01)).toEqual({
+      x: 0.525,
+      y: 0.505,
+      w: 0.45,
+      fontSize: 0.07,
+    })
+  })
+
+  it('uses the text block axes when the text is rotated', () => {
+    const rotated = { ...line, rotation: 90 }
+    // Dragging the east handle downwards becomes an outward move on the
+    // rotated block (local X): the width grows and the centre moves down.
+    expect(resizeFreeformLine(rotated, 'e', 0, 0.1)).toEqual({
+      x: 0.5,
+      y: 0.55,
+      w: 0.6,
+      fontSize: 0.08,
+    })
+  })
+
+  it('clamps to the same bounds as the slider and server validation', () => {
+    expect(resizeFreeformLine({ ...line, w: 0.95 }, 'e', 0.5, 0).w).toBe(1)
+    expect(resizeFreeformLine({ ...line, w: 0.11 }, 'w', 0.5, 0).w).toBe(0.1)
+    expect(resizeFreeformLine({ ...line, fontSize: 0.24 }, 's', 0, 0.5).fontSize).toBe(0.25)
+    expect(resizeFreeformLine({ ...line, fontSize: 0.03 }, 'n', 0, 0.5).fontSize).toBe(0.02)
   })
 })
 

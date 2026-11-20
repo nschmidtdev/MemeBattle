@@ -12,6 +12,7 @@ describe('normalizeSettings', () => {
   it('applies the documented defaults for missing input', () => {
     expect(normalizeSettings(undefined)).toEqual({
       rounds: 3,
+      rerolls: 10,
       captionTime: 45,
       voteTime: 10,
       packIds: [],
@@ -24,9 +25,10 @@ describe('normalizeSettings', () => {
 
   it('keeps valid values', () => {
     expect(
-      normalizeSettings({ rounds: 5, captionTime: 30, voteTime: 7, packIds: ['p1', 'p2'], lobbyName: 'Friday' }),
+      normalizeSettings({ rounds: 5, rerolls: 12, captionTime: 30, voteTime: 7, packIds: ['p1', 'p2'], lobbyName: 'Friday' }),
     ).toEqual({
       rounds: 5,
+      rerolls: 12,
       captionTime: 30,
       voteTime: 7,
       packIds: ['p1', 'p2'],
@@ -40,6 +42,15 @@ describe('normalizeSettings', () => {
     expect(normalizeSettings({ rounds: 11 }).rounds).toBe(10)
     expect(normalizeSettings({ rounds: 1 }).rounds).toBe(1)
     expect(normalizeSettings({ rounds: 10 }).rounds).toBe(10)
+  })
+
+  it('clamps rerolls to 0..20 and defaults to 10', () => {
+    expect(normalizeSettings({}).rerolls).toBe(10)
+    expect(normalizeSettings({ rerolls: -1 }).rerolls).toBe(0)
+    expect(normalizeSettings({ rerolls: 0 }).rerolls).toBe(0)
+    expect(normalizeSettings({ rerolls: 20 }).rerolls).toBe(20)
+    expect(normalizeSettings({ rerolls: 21 }).rerolls).toBe(20)
+    expect(normalizeSettings({ rerolls: 9.9 }).rerolls).toBe(9)
   })
 
   it('clamps captionTime to 5..120', () => {
@@ -65,8 +76,9 @@ describe('normalizeSettings', () => {
 
   it('falls back for non-numeric, empty or non-finite values', () => {
     for (const value of ['abc', '', '   ', null, undefined, Number.NaN, Number.POSITIVE_INFINITY, {}, []]) {
-      const settings = normalizeSettings({ rounds: value, captionTime: value, voteTime: value })
+      const settings = normalizeSettings({ rounds: value, rerolls: value, captionTime: value, voteTime: value })
       expect(settings.rounds).toBe(3)
+      expect(settings.rerolls).toBe(10)
       expect(settings.captionTime).toBe(45)
       expect(settings.voteTime).toBe(10)
     }
@@ -118,7 +130,7 @@ describe('normalizeSettings', () => {
 
   it('ignores unknown properties', () => {
     const settings = normalizeSettings({ rounds: 2, nonsense: true })
-    expect(settings).toEqual({ rounds: 2, captionTime: 45, voteTime: 10, packIds: [], lobbyName: 'Meme Lobby' })
+    expect(settings).toEqual({ rounds: 2, rerolls: 10, captionTime: 45, voteTime: 10, packIds: [], lobbyName: 'Meme Lobby' })
   })
 })
 

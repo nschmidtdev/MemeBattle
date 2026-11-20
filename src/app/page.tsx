@@ -42,6 +42,7 @@ export default function StartPage() {
   const [name, setName] = useState('')
   const [isPublic, setIsPublic] = useState(false)
   const [rounds, setRounds] = useState(3)
+  const [rerolls, setRerolls] = useState(10)
   const [captionTime, setCaptionTime] = useState(45)
   const [voteTime, setVoteTime] = useState(10)
   const [packIds, setPackIds] = useState<string[]>([])
@@ -178,10 +179,10 @@ export default function StartPage() {
       ...id,
       isPublic,
       lobbyName: name.trim() || 'Meme Lobby',
-      settings: { rounds, captionTime, voteTime, packIds },
+      settings: { rounds, rerolls, captionTime, voteTime, packIds },
     })
     sounds.join()
-  }, [awaitJoin, identity, isPublic, name, packIds, captionTime, rounds, voteTime, router])
+  }, [awaitJoin, identity, isPublic, name, packIds, captionTime, rerolls, rounds, voteTime, router])
 
   const togglePack = (id: string) => {
     setPackIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
@@ -282,12 +283,19 @@ export default function StartPage() {
               </label>
             </div>
 
-            <div className="grid gap-x-6 gap-y-3 sm:grid-cols-3">
+            <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2 xl:grid-cols-4">
               <label className="block">
                 <span className="mb-1 flex justify-between text-xs font-semibold uppercase tracking-wider text-dim">
                   Rounds <b className="text-sun">{rounds}</b>
                 </span>
                 <input type="range" min={1} max={10} className="w-full accent-punch" value={rounds} onChange={(e) => setRounds(+e.target.value)} />
+              </label>
+              <label className="block">
+                <span className="mb-1 flex justify-between text-xs font-semibold uppercase tracking-wider text-dim">
+                  Rerolls <b className="text-sun">{rerolls}</b>
+                </span>
+                <input type="range" min={0} max={20} step={1} aria-valuetext={`${rerolls} rerolls per player and round`} className="w-full accent-punch" value={rerolls} onChange={(e) => setRerolls(+e.target.value)} />
+                <span className="mt-0.5 flex justify-between text-[10px] tabular-nums text-dim"><span>0</span><span>20</span></span>
               </label>
               <label className="block">
                 <span className="mb-1 flex justify-between text-xs font-semibold uppercase tracking-wider text-dim">

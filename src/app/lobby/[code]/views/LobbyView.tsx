@@ -21,6 +21,7 @@ export default function LobbyView({ state, myId, onSettings, onStart, onKick, er
   const isHost = state.players.find((p) => p.id === myId)?.isHost ?? false
   const [lobbyName, setLobbyName] = useState(state.settings.lobbyName)
   const [rounds, setRounds] = useState(state.settings.rounds)
+  const [rerolls, setRerolls] = useState(state.settings.rerolls)
   const [captionTime, setCaptionTime] = useState(state.settings.captionTime)
   const [voteTime, setVoteTime] = useState(state.settings.voteTime)
   const [packs, setPacks] = useState<PackOption[] | null>(null)
@@ -32,6 +33,7 @@ export default function LobbyView({ state, myId, onSettings, onStart, onKick, er
   // keep numeric inputs in sync when the server state changes (e.g. play again)
   useEffect(() => {
     setRounds(state.settings.rounds)
+    setRerolls(state.settings.rerolls)
     setCaptionTime(state.settings.captionTime)
     setVoteTime(state.settings.voteTime)
   }, [state.settings])
@@ -189,6 +191,15 @@ export default function LobbyView({ state, myId, onSettings, onStart, onKick, er
             </span>
             <input type="range" min={1} max={10} step={1} className={sliderCls} value={rounds} disabled={!isHost}
               onChange={(e) => { setRounds(+e.target.value); onSettings({ rounds: +e.target.value }) }} />
+          </label>
+
+          <label className="block">
+            <span className="mb-1 flex justify-between text-xs font-semibold uppercase tracking-wider text-dim">
+              Rerolls / player <span className="font-bold text-sun">{rerolls}</span>
+            </span>
+            <input type="range" min={0} max={20} step={1} aria-valuetext={`${rerolls} rerolls per player and round`} className={sliderCls} value={rerolls} disabled={!isHost}
+              onChange={(e) => { setRerolls(+e.target.value); onSettings({ rerolls: +e.target.value }) }} />
+            <span className="mt-0.5 flex justify-between text-[10px] tabular-nums text-dim"><span>0</span><span>20</span></span>
           </label>
 
           <label className="block">

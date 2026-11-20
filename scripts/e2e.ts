@@ -352,11 +352,14 @@ async function runSuite() {
     (d) => d.settings?.rounds === 1 && d.settings?.packIds?.length === 1,
     5000,
   )
-  A.emit('lobby:settings', { rounds: 1, captionTime: 45, voteTime: 8, packIds: [pack.id] })
+  A.emit('lobby:settings', { rounds: 1, rerolls: 3, captionTime: 45, voteTime: 8, packIds: [pack.id] })
   const applied = await settingsApplied
   ok(
     'settings updated and normalized',
-    applied.settings.voteTime === 8 && applied.settings.captionTime === 45 && applied.settings.rounds === 1,
+    applied.settings.voteTime === 8 &&
+      applied.settings.captionTime === 45 &&
+      applied.settings.rounds === 1 &&
+      applied.settings.rerolls === 3,
     applied.settings,
   )
 
@@ -796,7 +799,7 @@ async function runSuite() {
     create: true,
     isPublic: false,
     lobbyName: 'Garbage Lobby',
-    settings: { packIds: null, rounds: 'x', captionTime: -5, voteTime: 999 },
+    settings: { packIds: null, rounds: 'x', rerolls: 'x', captionTime: -5, voteTime: 999 },
   })
   const g1: { code: string; playerId: string } = await g1Joined
   ok('garbage settings: lobby created without crashing', /^[A-Z0-9]{5}$/.test(g1?.code ?? ''), g1)
@@ -805,7 +808,12 @@ async function runSuite() {
   const gs = latest(g1Updates)?.settings
   ok(
     'garbage settings normalized to defaults/clamps',
-    gs?.rounds === 3 && gs?.captionTime === 5 && gs?.voteTime === 60 && Array.isArray(gs?.packIds) && gs.packIds.length === 0,
+    gs?.rounds === 3 &&
+      gs?.rerolls === 10 &&
+      gs?.captionTime === 5 &&
+      gs?.voteTime === 60 &&
+      Array.isArray(gs?.packIds) &&
+      gs.packIds.length === 0,
     gs,
   )
   ok('garbage settings keep the lobby name', latest(g1Updates)?.name === 'Garbage Lobby', latest(g1Updates)?.name)
