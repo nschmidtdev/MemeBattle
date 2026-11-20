@@ -2,6 +2,7 @@
  * E2E smoke test: full 2-player game over sockets, reconnect/resume, admin API.
  * Run against a live server:  npx tsx scripts/e2e.ts
  */
+/* eslint-disable @typescript-eslint/no-explicit-any -- socket payloads are dynamic test data */
 import '../src/lib/env' // load the same .env* files as the server (ADMIN_*, PORT, ...)
 import { io, type Socket } from 'socket.io-client'
 

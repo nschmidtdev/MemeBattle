@@ -4,9 +4,9 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: meme
-      # Set POSTGRES_PASSWORD in .env before the first start. The default is
-      # only a development convenience and must not be used on a LAN.
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secret}
+      # Required: copy .env.example to .env and set POSTGRES_PASSWORD before
+      # the first start. There is deliberately no weak fallback.
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (see .env.example)}"
       POSTGRES_DB: meme_battle
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -23,8 +23,8 @@ services:
       # 0.0.0.0 is required for phones on the LAN; use 127.0.0.1 for local-only.
       - "${APP_BIND:-0.0.0.0}:${APP_PORT:-3000}:3000"
     environment:
-      # Keep in sync with POSTGRES_PASSWORD above (both default to "secret").
-      DATABASE_URL: postgresql://meme:${POSTGRES_PASSWORD:-secret}@db:5432/meme_battle?schema=public
+      # Compose builds the connection string from the required password above.
+      DATABASE_URL: "postgresql://meme:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (see .env.example)}@db:5432/meme_battle?schema=public"
       PORT: "3000"
       UPLOAD_DIR: /data/uploads
       # Overridable via a local .env file or shell environment (compose

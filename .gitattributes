@@ -1,0 +1,9 @@
+# Keep LF in the repo, especially for shell scripts used inside Linux images.
+* text=auto
+*.sh text eol=lf
+*.ttf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary

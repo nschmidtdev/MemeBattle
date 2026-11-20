@@ -3,6 +3,25 @@
   "version": "0.1.0",
   "license": "MIT",
   "description": "Self-hosted, open-source multiplayer meme party game: caption templates, vote, win.",
+  "author": "nschmidtdev",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nschmidtdev/MemeBattle.git"
+  },
+  "homepage": "https://github.com/nschmidtdev/MemeBattle#readme",
+  "bugs": {
+    "url": "https://github.com/nschmidtdev/MemeBattle/issues"
+  },
+  "keywords": [
+    "meme",
+    "party-game",
+    "self-hosted",
+    "multiplayer",
+    "nextjs",
+    "socket-io",
+    "postgresql",
+    "docker"
+  ],
   "engines": {
     "node": ">=22 <27"
   },

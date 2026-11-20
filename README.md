@@ -1,5 +1,7 @@
 # Meme Battle
 
+[![CI](https://github.com/nschmidtdev/MemeBattle/actions/workflows/ci.yml/badge.svg)](https://github.com/nschmidtdev/MemeBattle/actions/workflows/ci.yml)
+
 A self-hosted, browser-based party game inspired by *Make It Meme*. Players get a meme
 template, caption it under time pressure, and vote on each other's memes. The best
 meme-maker wins. No accounts, no filters, no mercy.
@@ -50,9 +52,10 @@ meme-maker wins. No accounts, no filters, no mercy.
 Requirements: [Docker](https://www.docker.com/) with Docker Compose.
 
 ```sh
-git clone <repo-url> meme-battle
+git clone https://github.com/nschmidtdev/MemeBattle.git meme-battle
 cd meme-battle
-cp .env.example .env        # optional, but set POSTGRES_PASSWORD and ADMIN_PASSWORD
+cp .env.example .env
+# Edit .env: POSTGRES_PASSWORD is required, ADMIN_PASSWORD is optional.
 docker compose up -d --build
 ```
 
@@ -64,9 +67,10 @@ user.
 - If you set `ADMIN_PASSWORD` in `.env`, that is the admin password. If you leave it
   empty, a random password is generated on first boot and printed **once** to the
   container log: `docker compose logs app | grep -i password`.
-- Set `POSTGRES_PASSWORD` **before the first start**; Postgres only applies it when
-  the `pgdata` volume is initialized. The `secret` fallback is a development
-  convenience — do not expose it to a LAN you do not trust.
+- `POSTGRES_PASSWORD` is required and must be set **before the first start**; Postgres
+  only applies it when the `pgdata` volume is initialized. Compose refuses to start
+  without it — there is no weak default password. Changing it later requires
+  recreating the volume (or `ALTER ROLE`).
 
 If port 3000 is already in use, set `APP_PORT` in `.env` (e.g. `APP_PORT=3100`) and
 open <http://localhost:3100>. The port is published on all interfaces (`APP_BIND`,
@@ -82,7 +86,7 @@ Node.js 24 is the supported runtime (`.nvmrc`); `package.json` allows `>=22 <27`
 
 ```sh
 # 1. Start a Postgres (or point DATABASE_URL at any existing one)
-docker run -d --name mb-dev-pg -e POSTGRES_USER=meme -e POSTGRES_PASSWORD=secret \
+docker run -d --name mb-dev-pg -e POSTGRES_USER=meme -e POSTGRES_PASSWORD=dev-only-password \
   -e POSTGRES_DB=meme_battle -p 127.0.0.1:5432:5432 postgres:16-alpine
 
 # 2. Install, configure, migrate, seed
@@ -142,7 +146,7 @@ All configuration is via environment variables (see `.env.example`):
 | `UPLOAD_DIR`        | `./data/uploads`         | Where uploaded template images are stored (Docker: `/data/uploads`). |
 | `SEED_ON_BOOT`      | `true`                   | Docker entrypoint only: set `false` to skip seeding at startup. |
 | `SEED_FORCE`        | unset                    | Set to `1` for a deliberate re-sync of the seeded Classic pack. |
-| `POSTGRES_PASSWORD` | `secret` (Compose only)  | Password for the bundled Postgres. Set it before the first start; use letters/digits (it is embedded in `DATABASE_URL`). |
+| `POSTGRES_PASSWORD` | — (required)             | Password for the bundled Postgres. Set it before the first start; use letters/digits (it is embedded in `DATABASE_URL`). |
 
 With Docker Compose, values from `.env` are used for variable substitution (e.g.
 `POSTGRES_PASSWORD`, `APP_PORT`, `ADMIN_PASSWORD`); the container environment itself is
@@ -254,6 +258,30 @@ data living in the bundle.
 Node.js 24 · Next.js 15 (App Router, TypeScript) · Tailwind CSS · Socket.IO ·
 Prisma + PostgreSQL · Canvas-based client-side meme rendering · Docker Compose for
 self-hosting.
+
+## Content & third-party assets
+
+The repository ships only the hand-made seed SVGs in `public/seed` and the bundled
+Anton font (SIL Open Font License). Imported packs (Imgflip, Memegen, local images)
+are **not** committed: they live in your database and `uploads` volume. You are
+responsible for the rights and legality of content you import or upload. There is no
+content filter; do not use the software to distribute illegal material.
+
+Meme Battle is not affiliated with *Make It Meme*, Imgflip, or any template source.
+
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md). Before opening a PR run:
+
+```sh
+npx tsc --noEmit && npm test && npm run lint
+```
+
+## Security
+
+See [SECURITY.md](./SECURITY.md) for private vulnerability reports and self-hosting
+hardening. Never commit `.env` files, uploads, database dumps, API keys or session
+cookies.
 
 ## License
 
