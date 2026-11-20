@@ -230,6 +230,51 @@ function isVectorSource(url: string): boolean {
 }
 
 /**
+ * Resolve the final canvas geometry and image placement for a loaded image.
+ * Factored out so the animated-GIF view can size its DOM layers exactly like
+ * the canvas renderer.
+ */
+export function memeLayoutForImage(
+  template: TemplateData,
+  submission: CaptionSubmission,
+  image: HTMLImageElement,
+  maxDim = 640,
+): MemeCanvasLayout {
+  const vector =
+    isVectorSource(image.currentSrc || image.src || '') || isVectorSource(template.imageKey)
+
+  // Never derive the aspect ratio from the browser's 0 / 300×150 placeholder
+  // size for SVG images. Without intrinsic dimensions we fall back to 4:3.
+  let iw = Number(image.naturalWidth) || 0
+  let ih = Number(image.naturalHeight) || 0
+  if (iw <= 0 || ih <= 0 || (vector && iw === 300 && ih === 150)) {
+    iw = 800
+    ih = 600
+  }
+
+  const padding = normalizeMemePadding(submission.padding)
+  return memeCanvasLayout(iw, ih, maxDim, padding, vector)
+}
+
+/** True for GIF sources; those animate natively in the DOM-based view. */
+export function isAnimatedImage(source: string | null | undefined): boolean {
+  return /\.gif(?:[?#]|$)/i.test(source ?? '')
+}
+
+/** Draw only the text layer (used over a live animated GIF). */
+export function drawMemeText(
+  ctx: CanvasRenderingContext2D,
+  template: TemplateData,
+  submission: CaptionSubmission,
+  width: number,
+  height: number,
+) {
+  for (const item of buildTextItems(template, submission)) {
+    drawTextItem(ctx, item, width, height)
+  }
+}
+
+/**
  * Draw the template image + all text onto a canvas.
  * `image` is the decoded HTMLImageElement for the template (SVG works fine).
  * Text uses relative coordinates so output is resolution-independent.
@@ -243,19 +288,7 @@ export function renderMeme(
   image: HTMLImageElement,
   maxDim = 640,
 ): HTMLCanvasElement {
-  const vector = isVectorSource(image.currentSrc || image.src || '') || isVectorSource(template.imageKey)
-
-  // Never derive the aspect ratio from the browser's 0 / 300×150 placeholder
-  // size for SVG images. Without intrinsic dimensions we fall back to 4:3.
-  let iw = Number(image.naturalWidth) || 0
-  let ih = Number(image.naturalHeight) || 0
-  if (iw <= 0 || ih <= 0 || (vector && iw === 300 && ih === 150)) {
-    iw = 800
-    ih = 600
-  }
-
-  const padding = normalizeMemePadding(submission.padding)
-  const layout = memeCanvasLayout(iw, ih, maxDim, padding, vector)
+  const layout = memeLayoutForImage(template, submission, image, maxDim)
   const W = layout.width
   const H = layout.height
 
@@ -278,9 +311,7 @@ export function renderMeme(
 
   // Text coordinates and font sizes are relative to the whole canvas,
   // including the bars, matching the editor stage.
-  for (const item of buildTextItems(template, submission)) {
-    drawTextItem(ctx, item, W, H)
-  }
+  drawMemeText(ctx, template, submission, W, H)
   return canvas
 }
 

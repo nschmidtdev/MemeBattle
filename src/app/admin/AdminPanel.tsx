@@ -424,9 +424,9 @@ export default function AdminPanel({ email }: Props) {
               <button
                 className="ghost px-2 py-1.5 text-xs"
                 onClick={() => setImportOpen(true)}
-                title="Build a pack from Imgflip templates"
+                title="Build a pack from a template catalog or local images"
               >
-                Import from Imgflip
+                Import memes
               </button>
             </div>
             <input

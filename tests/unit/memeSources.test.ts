@@ -6,6 +6,8 @@ import {
   normalizeImgflip,
   normalizeManifest,
   normalizeMemegen,
+  normalizeMemegenscript,
+  normalizeMemegenRs,
   slugify,
   stableTemplateName,
   templateNameKey,
@@ -200,6 +202,76 @@ describe('normalizeMemegen', () => {
     expect(normalizeMemegen({})).toEqual([])
     expect(normalizeMemegen({ templates: [] })).toEqual([])
     expect(normalizeMemegen('nope')).toEqual([])
+  })
+})
+
+describe('normalizeMemegenscript', () => {
+  it('maps entries and falls back to memegenscript.com images', () => {
+    const result = normalizeMemegenscript([
+      {
+        id: 'drake',
+        name: 'Drakeposting',
+        blank: 'https://memegenscript.com/images/drake.png',
+        lines: 2,
+      },
+      { id: 'fallback', name: 'Fallback' },
+    ])
+
+    expect(result).toEqual([
+      {
+        source: 'memegenscript',
+        sourceId: 'drake',
+        name: 'Drakeposting',
+        imageUrl: 'https://memegenscript.com/images/drake.png',
+        boxCount: 2,
+      },
+      {
+        source: 'memegenscript',
+        sourceId: 'fallback',
+        name: 'Fallback',
+        imageUrl: 'https://memegenscript.com/images/fallback.png',
+      },
+    ])
+  })
+
+  it('ignores broken entries', () => {
+    expect(normalizeMemegenscript(null)).toEqual([])
+    expect(normalizeMemegenscript([{ id: '', name: 'No id' }, { id: 'x' }])).toEqual([])
+  })
+})
+
+describe('normalizeMemegenRs', () => {
+  it('resolves relative blank paths against memegen.rs', () => {
+    const result = normalizeMemegenRs([
+      {
+        id: 'drake-hotline-bling',
+        name: 'Drake Hotline Bling',
+        blank: '/images/drake-hotline-bling.png',
+        lines: 2,
+      },
+    ])
+
+    expect(result).toEqual([
+      {
+        source: 'memegenrs',
+        sourceId: 'drake-hotline-bling',
+        name: 'Drake Hotline Bling',
+        imageUrl: 'https://memegen.rs/images/drake-hotline-bling.png',
+        boxCount: 2,
+      },
+    ])
+  })
+
+  it('rejects foreign absolute blanks and falls back for safe ids', () => {
+    const result = normalizeMemegenRs([
+      { id: 'safe-id', name: 'Safe', blank: 'https://evil.test/x.png' },
+    ])
+
+    expect(result[0]?.imageUrl).toBe('https://memegen.rs/images/safe-id.png')
+  })
+
+  it('ignores invalid ids without a usable blank', () => {
+    expect(normalizeMemegenRs([{ id: '../bad', name: 'Bad' }])).toEqual([])
   })
 })
 

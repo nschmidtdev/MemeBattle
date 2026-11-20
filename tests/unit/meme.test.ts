@@ -3,6 +3,7 @@ import {
   MEME_PAD_RATIO,
   buildTextItems,
   downloadTargetSize,
+  isAnimatedImage,
   isLightTextColor,
   memeCanvasLayout,
   normalizeMemePadding,
@@ -132,6 +133,21 @@ describe('memeCanvasLayout', () => {
     expect(layout.scale).toBe(1)
     expect(layout.width).toBe(200)
     expect(layout.height).toBe(140)
+  })
+})
+
+describe('isAnimatedImage', () => {
+  it('detects gif URLs including query strings and hashes', () => {
+    expect(isAnimatedImage('https://example.test/dance.gif')).toBe(true)
+    expect(isAnimatedImage('/api/images/abc.gif?x=1')).toBe(true)
+    expect(isAnimatedImage('abc.GIF#frag')).toBe(true)
+  })
+
+  it('does not treat static images as animated', () => {
+    expect(isAnimatedImage('https://example.test/drake.png')).toBe(false)
+    expect(isAnimatedImage('https://example.test/seed.svg')).toBe(false)
+    expect(isAnimatedImage(undefined)).toBe(false)
+    expect(isAnimatedImage('')).toBe(false)
   })
 })
 

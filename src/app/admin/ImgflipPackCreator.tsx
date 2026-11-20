@@ -15,6 +15,65 @@ const MIN_IMAGE_BYTES = 1024
 /** Mirrors MAX_UPLOAD_BYTES in src/lib/storage.ts (kept local: that module is server-only). */
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024
 const PAUSE_BETWEEN_ITEMS_MS = 150
+const ALLOWED_LOCAL_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
+
+type SourceId = 'imgflip' | 'memegen' | 'memegenscript' | 'memegenrs' | 'local'
+
+interface SourceDefinition {
+  id: SourceId
+  label: string
+  defaultPack: string
+  endpoint: string | null
+  hint: string
+  searchPlaceholder: string
+}
+
+const SOURCES: SourceDefinition[] = [
+  {
+    id: 'imgflip',
+    label: 'Imgflip',
+    defaultPack: 'Imgflip Top 100',
+    endpoint: '/api/admin/meme-sources/imgflip',
+    hint: 'Top 100 templates from the free Imgflip API (no key).',
+    searchPlaceholder: 'Search by name or Imgflip id…',
+  },
+  {
+    id: 'memegen',
+    label: 'Memegen',
+    defaultPack: 'Memegen',
+    endpoint: '/api/admin/meme-sources/memegen',
+    hint: '209 Memegen templates with lines, styles and source links.',
+    searchPlaceholder: 'Search Memegen templates…',
+  },
+  {
+    id: 'memegenscript',
+    label: 'Memegenscript',
+    defaultPack: 'Memegenscript',
+    endpoint: '/api/admin/meme-sources/memegenscript',
+    hint: '564 templates from the Memegenscript catalog.',
+    searchPlaceholder: 'Search Memegenscript templates…',
+  },
+  {
+    id: 'memegenrs',
+    label: 'Memegen.rs',
+    defaultPack: 'Memegen.rs',
+    endpoint: '/api/admin/meme-sources/memegenrs',
+    hint: '698 templates from the self-hostable Memegen.rs catalog.',
+    searchPlaceholder: 'Search Memegen.rs templates…',
+  },
+  {
+    id: 'local',
+    label: 'Local images',
+    defaultPack: 'Local Memes',
+    endpoint: null,
+    hint: 'Pick PNG/JPEG/GIF/WebP files from your device. No content filter — the images stay in this local instance.',
+    searchPlaceholder: 'Search selected images…',
+  },
+]
+
+function sourceDefinition(id: SourceId): SourceDefinition {
+  return SOURCES.find((source) => source.id === id) ?? SOURCES[0]
+}
 
 // Hover preview geometry. The popover is rendered in a body portal so it can
 // never be clipped by the dialog's scroll container.
@@ -42,9 +101,10 @@ interface ExistingPack {
   name: string
 }
 
-interface ImgflipResponse {
+interface CatalogResponse {
   memes?: SourceItem[]
   fetchedAt?: string
+  label?: string
 }
 
 interface PacksResponse {
@@ -207,6 +267,7 @@ function fetchedLabel(value: string | null): string {
 
 export default function ImgflipPackCreator({ onClose, onImported }: Props) {
   const [stage, setStage] = useState<Stage>('setup')
+  const [source, setSource] = useState<SourceId>('imgflip')
 
   // Pack details
   const [packName, setPackName] = useState('Imgflip Top 100')
@@ -224,6 +285,7 @@ export default function ImgflipPackCreator({ onClose, onImported }: Props) {
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<Set<string>>(() => new Set())
   const [hoverPreview, setHoverPreview] = useState<HoverPreview | null>(null)
+  const [localNotice, setLocalNotice] = useState('')
 
   // Import run
   const [running, setRunning] = useState(false)
@@ -240,6 +302,15 @@ export default function ImgflipPackCreator({ onClose, onImported }: Props) {
   const cancelledRef = useRef(false)
   const abortRef = useRef<AbortController | null>(null)
   const notifiedRef = useRef(false)
+  const sourceRef = useRef<SourceId>('imgflip')
+  const localUrlsRef = useRef<string[]>([])
+
+  const revokeLocalUrls = useCallback(() => {
+    for (const url of localUrlsRef.current) URL.revokeObjectURL(url)
+    localUrlsRef.current = []
+  }, [])
+
+  const sourceInfo = sourceDefinition(source)
 
   const notifyImported = useCallback(() => {
     if (notifiedRef.current) return
@@ -271,12 +342,23 @@ export default function ImgflipPackCreator({ onClose, onImported }: Props) {
     }
   }, [])
 
-  const loadMemes = useCallback(async () => {
+  const loadMemes = useCallback(async (sourceId: SourceId) => {
+    const definition = sourceDefinition(sourceId)
+    if (!definition.endpoint) {
+      setMemes([])
+      setFetchedAt(null)
+      setMemesLoading(false)
+      setMemesError(null)
+      setSelected(new Set())
+      return
+    }
+
     setMemesLoading(true)
     setMemesError(null)
     try {
-      const data = await getJson<ImgflipResponse>('/api/admin/imgflip')
-      if (!Array.isArray(data.memes)) throw new Error('Unexpected Imgflip response.')
+      const data = await getJson<CatalogResponse>(definition.endpoint)
+      if (sourceRef.current !== sourceId) return
+      if (!Array.isArray(data.memes)) throw new Error('Unexpected catalog response.')
       setMemes(data.memes)
       setFetchedAt(typeof data.fetchedAt === 'string' ? data.fetchedAt : null)
       // Keep a refetch from silently retaining ids that disappeared upstream.
@@ -287,16 +369,83 @@ export default function ImgflipPackCreator({ onClose, onImported }: Props) {
       })
     } catch (error) {
       if (error instanceof HttpError && error.status === 401) return
-      setMemesError(errorMessage(error))
+      if (sourceRef.current === sourceId) setMemesError(errorMessage(error))
     } finally {
-      setMemesLoading(false)
+      if (sourceRef.current === sourceId) setMemesLoading(false)
     }
   }, [])
 
   useEffect(() => {
+    sourceRef.current = source
+    void loadMemes(source)
+  }, [source, loadMemes])
+
+  useEffect(() => {
     void loadPacks()
-    void loadMemes()
-  }, [loadPacks, loadMemes])
+  }, [loadPacks])
+
+  useEffect(() => {
+    return () => revokeLocalUrls()
+  }, [revokeLocalUrls])
+
+  const changeSource = (next: SourceId) => {
+    if (next === source) return
+    const previousDefault = sourceInfo.defaultPack
+    const nextInfo = sourceDefinition(next)
+    setPackName((previous) =>
+      !previous.trim() || previous === previousDefault ? nextInfo.defaultPack : previous,
+    )
+    setQuery('')
+    setSelected(new Set())
+    setMemes(null)
+    setFetchedAt(null)
+    setMemesError(null)
+    setLocalNotice('')
+    setHoverPreview(null)
+    revokeLocalUrls()
+    sourceRef.current = next
+    setSource(next)
+  }
+
+  const loadLocalFiles = (files: FileList | null) => {
+    if (!files || files.length === 0) return
+    revokeLocalUrls()
+    const items: SourceItem[] = []
+    const problems: string[] = []
+
+    for (const file of Array.from(files)) {
+      if (!ALLOWED_LOCAL_TYPES.has(file.type)) {
+        problems.push(`${file.name}: unsupported type`)
+        continue
+      }
+      if (!isAllowedImageSize(file.size)) {
+        problems.push(`${file.name}: must be 1 KB–10 MB`)
+        continue
+      }
+      const url = URL.createObjectURL(file)
+      localUrlsRef.current.push(url)
+      items.push({
+        source: 'folder',
+        sourceId: `local-${items.length}-${file.name}-${file.lastModified}`,
+        name: file.name.replace(/\.[^.]+$/, '') || file.name,
+        imageUrl: url,
+      })
+    }
+
+    setMemes(items)
+    setSelected(new Set(items.map((item) => item.sourceId)))
+    setQuery('')
+    setMemesError(null)
+    setFetchedAt(null)
+    setMemesLoading(false)
+    setLocalNotice(
+      problems.length > 0
+        ? `${items.length} image(s) loaded. Skipped: ${problems.slice(0, 3).join('; ')}${
+            problems.length > 3 ? ` (+${problems.length - 3} more)` : ''
+          }`
+        : `${items.length} image(s) loaded.`,
+    )
+  }
 
   // Lock page scrolling, remember where focus came from and restore it on close.
   useEffect(() => {
@@ -536,7 +685,7 @@ export default function ImgflipPackCreator({ onClose, onImported }: Props) {
 
         try {
           if (!meme.imageUrl) {
-            throw new SkippableError('No image URL in the Imgflip catalog.')
+            throw new SkippableError('No image URL in the selected source.')
           }
 
           const imageResponse = await fetch(meme.imageUrl, {
@@ -572,7 +721,7 @@ export default function ImgflipPackCreator({ onClose, onImported }: Props) {
           }
 
           const form = new FormData()
-          const fileName = `${slugify(meme.name, 40) || `imgflip-${meme.sourceId}`}${extension}`
+          const fileName = `${slugify(meme.name, 40) || `${meme.source}-${meme.sourceId}`}${extension}`
           form.append('file', blob, fileName)
 
           const upload = await getJson<UploadResponse>('/api/upload', {
@@ -707,10 +856,10 @@ export default function ImgflipPackCreator({ onClose, onImported }: Props) {
               Admin · Step {stepNumber} of 3
             </p>
             <h2 id={TITLE_ID} className="mt-1 text-lg font-bold sm:text-xl">
-              Imgflip pack creator
+              Meme pack creator
             </h2>
             <p className="mt-1 text-sm text-dim">
-              Create a new pack from Imgflip&apos;s current template catalog.
+              Create a new pack from a free template catalog or local images.
             </p>
           </div>
           <button
@@ -732,6 +881,31 @@ export default function ImgflipPackCreator({ onClose, onImported }: Props) {
         >
           {stage === 'setup' && (
             <div className="space-y-4">
+              <div>
+                <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-dim">
+                  Source
+                </span>
+                <div role="tablist" aria-label="Meme source" className="flex flex-wrap gap-2">
+                  {SOURCES.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={source === item.id}
+                      className={`rounded-full border px-3 py-1.5 text-sm font-semibold transition ${
+                        source === item.id
+                          ? 'border-punch bg-punch/20 text-punch'
+                          : 'border-line bg-night2 text-dim hover:border-dim hover:text-ink'
+                      }`}
+                      onClick={() => changeSource(item.id)}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-1 text-xs text-dim">{sourceInfo.hint}</p>
+              </div>
+
               <div className="grid gap-4 sm:grid-cols-2">
                 <label className="block text-sm">
                   <span className="mb-1 block font-medium">Pack name</span>
@@ -739,15 +913,15 @@ export default function ImgflipPackCreator({ onClose, onImported }: Props) {
                     ref={nameInputRef}
                     value={packName}
                     maxLength={60}
-                    placeholder="Imgflip Top 100"
+                    placeholder={sourceInfo.defaultPack}
                     onChange={(event) => setPackName(event.target.value)}
                     aria-invalid={Boolean(nameError)}
-                    aria-describedby={nameError ? 'imgflip-pack-name-error' : undefined}
+                    aria-describedby={nameError ? 'meme-pack-name-error' : undefined}
                     className="w-full"
                   />
                   {nameError ? (
                     <span
-                      id="imgflip-pack-name-error"
+                      id="meme-pack-name-error"
                       role="alert"
                       className="mt-1 block text-sm text-rose"
                     >
@@ -823,10 +997,12 @@ export default function ImgflipPackCreator({ onClose, onImported }: Props) {
             <div className="space-y-4">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
-                  <h3 className="font-semibold">Choose templates</h3>
+                  <h3 className="font-semibold">
+                    {source === 'local' ? 'Choose images' : 'Choose templates'}
+                  </h3>
                   <p className="mt-1 text-xs text-dim">
                     {memes === null
-                      ? 'Loading the Imgflip catalog…'
+                      ? `Loading the ${sourceInfo.label} catalog…`
                       : `${filteredMemes.length} of ${memes.length} shown · ${selected.size} selected`}
                   </p>
                   {fetchedLabel(fetchedAt) && (
@@ -834,6 +1010,14 @@ export default function ImgflipPackCreator({ onClose, onImported }: Props) {
                   )}
                 </div>
                 <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="ghost"
+                    onClick={() => setStage('setup')}
+                    disabled={running}
+                  >
+                    ← Pack details
+                  </button>
                   <button
                     type="button"
                     className="ghost"
@@ -858,19 +1042,49 @@ export default function ImgflipPackCreator({ onClose, onImported }: Props) {
                 <input
                   type="search"
                   value={query}
-                  placeholder="Search by name or Imgflip id…"
+                  placeholder={sourceInfo.searchPlaceholder}
                   onChange={(event) => setQuery(event.target.value)}
                   className="w-full"
                 />
               </label>
 
+              {source === 'local' && (
+                <div className="rounded-xl border border-line bg-night2 p-3">
+                  <label className="btn inline-flex cursor-pointer items-center gap-2">
+                    <span className="text-lg leading-none">＋</span>
+                    Choose images
+                    <input
+                      type="file"
+                      multiple
+                      accept="image/png,image/jpeg,image/gif,image/webp"
+                      className="sr-only"
+                      onChange={(event) => {
+                        loadLocalFiles(event.currentTarget.files)
+                        event.currentTarget.value = ''
+                      }}
+                    />
+                  </label>
+                  <p className="mt-2 text-xs text-dim">
+                    PNG, JPEG, GIF or WebP · 1 KB–10 MB per file. Local images are uploaded to
+                    this instance only; there is no content filter.
+                  </p>
+                  {localNotice && (
+                    <p className="mt-1 text-xs text-sun" role="status">
+                      {localNotice}
+                    </p>
+                  )}
+                </div>
+              )}
+
               {memesError && (
                 <div className="error-banner flex flex-wrap items-center justify-between gap-2">
-                  <span>Could not load Imgflip templates: {memesError}</span>
+                  <span>
+                    Could not load {sourceInfo.label} templates: {memesError}
+                  </span>
                   <button
                     type="button"
                     className="ghost"
-                    onClick={() => void loadMemes()}
+                    onClick={() => void loadMemes(source)}
                     disabled={memesLoading}
                   >
                     {memesLoading ? 'Retrying…' : 'Retry'}
@@ -880,15 +1094,17 @@ export default function ImgflipPackCreator({ onClose, onImported }: Props) {
 
               {memesLoading && memes === null && (
                 <p className="py-8 text-center text-sm text-dim">
-                  Loading the Imgflip catalog…
+                  Loading the {sourceInfo.label} catalog…
                 </p>
               )}
 
               {memes !== null && filteredMemes.length === 0 && (
                 <p className="py-8 text-center text-sm text-dim">
-                  {memes.length === 0
-                    ? 'No templates are available right now.'
-                    : 'No templates match your search.'}
+                  {source === 'local' && memes.length === 0
+                    ? 'No images loaded yet. Choose some files above.'
+                    : memes.length === 0
+                      ? `No templates are available in ${sourceInfo.label} right now.`
+                      : 'No templates match your search.'}
                 </p>
               )}
 
@@ -931,7 +1147,10 @@ export default function ImgflipPackCreator({ onClose, onImported }: Props) {
                               {meme.name}
                             </span>
                             <span className="block text-xs text-dim">
-                              {memeDetail(meme) || 'Imgflip template'}
+                              {memeDetail(meme) ||
+                                (meme.source === 'folder'
+                                  ? 'Local image'
+                                  : `${sourceInfo.label} template`)}
                             </span>
                           </span>
                         </label>
@@ -1159,7 +1378,10 @@ export default function ImgflipPackCreator({ onClose, onImported }: Props) {
             <div className="border-t border-line px-3 py-2">
               <p className="line-clamp-2 text-sm font-medium">{hoverPreview.meme.name}</p>
               <p className="mt-0.5 text-xs text-dim">
-                {memeDetail(hoverPreview.meme) || 'Imgflip template'}
+                {memeDetail(hoverPreview.meme) ||
+                  (hoverPreview.meme.source === 'folder'
+                    ? 'Local image'
+                    : `${sourceInfo.label} template`)}
               </p>
             </div>
           </div>,

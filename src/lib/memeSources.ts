@@ -8,7 +8,7 @@
  * in the CLI script.
  */
 
-export type SourceKind = 'imgflip' | 'memegen' | 'manifest' | 'folder'
+export type SourceKind = 'imgflip' | 'memegen' | 'memegenscript' | 'memegenrs' | 'manifest' | 'folder'
 
 export interface SourceItem {
   source: SourceKind
@@ -255,6 +255,85 @@ export function normalizeMemegen(payload: unknown): SourceItem[] {
     const width = readInteger(entry.width, 1)
     const height = readInteger(entry.height, 1)
     // Memegen calls its caption slots "lines"; it is the closest box_count.
+    const boxCount = readInteger(entry.lines, 0)
+    if (width !== undefined) item.width = width
+    if (height !== undefined) item.height = height
+    if (boxCount !== undefined) item.boxCount = boxCount
+    items.push(item)
+  }
+
+  return dedupeSourceItems(items)
+}
+
+/**
+ * Memegenscript mirrors the Memegen payload but serves its own images. Use the
+ * same field mapping with a source-specific fallback for missing `blank`.
+ */
+export function normalizeMemegenscript(payload: unknown): SourceItem[] {
+  if (!Array.isArray(payload)) return []
+
+  const items: SourceItem[] = []
+  for (const entry of payload) {
+    if (!isRecord(entry)) continue
+    const sourceId = readId(entry.id)
+    const name = readName(entry.name)
+    if (!sourceId || !name) continue
+
+    const blank = readString(entry.blank)
+    const imageUrl = isAbsoluteHttpUrl(blank)
+      ? blank
+      : /^[a-z0-9][a-z0-9_-]*$/i.test(sourceId)
+        ? `https://memegenscript.com/images/${encodeURIComponent(sourceId)}.png`
+        : ''
+    if (!imageUrl) continue
+
+    const item: SourceItem = { source: 'memegenscript', sourceId, name, imageUrl }
+    const width = readInteger(entry.width, 1)
+    const height = readInteger(entry.height, 1)
+    const boxCount = readInteger(entry.lines, 0)
+    if (width !== undefined) item.width = width
+    if (height !== undefined) item.height = height
+    if (boxCount !== undefined) item.boxCount = boxCount
+    items.push(item)
+  }
+
+  return dedupeSourceItems(items)
+}
+
+/**
+ * Memegen.rs uses mostly the same payload but `blank` may be a relative path
+ * such as `/images/drake-hotline-bling.png`, so resolve it against the host.
+ */
+export function normalizeMemegenRs(payload: unknown): SourceItem[] {
+  if (!Array.isArray(payload)) return []
+
+  const items: SourceItem[] = []
+  for (const entry of payload) {
+    if (!isRecord(entry)) continue
+    const sourceId = readId(entry.id)
+    const name = readName(entry.name)
+    if (!sourceId || !name) continue
+
+    const blank = readString(entry.blank)
+    let imageUrl = ''
+    if (blank) {
+      try {
+        const resolved = new URL(blank, 'https://memegen.rs')
+        if (resolved.protocol === 'https:' && /(^|\.)memegen\.rs$/i.test(resolved.hostname)) {
+          imageUrl = resolved.href
+        }
+      } catch {
+        imageUrl = ''
+      }
+    }
+    if (!imageUrl && /^[a-z0-9][a-z0-9_-]*$/i.test(sourceId)) {
+      imageUrl = `https://memegen.rs/images/${encodeURIComponent(sourceId)}.png`
+    }
+    if (!imageUrl) continue
+
+    const item: SourceItem = { source: 'memegenrs', sourceId, name, imageUrl }
+    const width = readInteger(entry.width, 1)
+    const height = readInteger(entry.height, 1)
     const boxCount = readInteger(entry.lines, 0)
     if (width !== undefined) item.width = width
     if (height !== undefined) item.height = height

@@ -26,14 +26,17 @@ meme-maker wins. No accounts, no filters, no mercy.
   templates.
 - **Optional top/bottom whitespace** — add white bars above, below or around the
   template image, giving captions extra room without changing the image itself.
+- **Animated GIF templates** — GIFs animate in the editor, voting and result
+  galleries (the live image sits under a transparent text layer); PNG downloads
+  are still frames.
 - **Content-only admin panel** — manage packs and templates via `/admin`. No user
   management, no reporting, no moderation.
 - **Admin workspace** — fixed-height pack sidebar and template grid with internal
   scrolling, modal editors and hover previews; no endless page scroll even with
   hundreds of templates.
-- **Imgflip pack creator** — pick templates from the live Imgflip catalog, select
-  what you need and import them into a new local pack with progress, dedupe and
-  error reporting.
+- **Meme pack creator** — pick templates from Imgflip, Memegen, Memegenscript,
+  Memegen.rs or local images, select what you need and import them into a new
+  local pack with progress, dedupe and error reporting.
 - **Böse memes allowed** — there is intentionally no profanity filter and no
   auto-moderation. What you caption is what the room gets.
 - **Self-hosted & private** — Docker Compose, one Postgres container, no external
