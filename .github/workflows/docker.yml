@@ -31,7 +31,7 @@ jobs:
       # arm64 builds for Raspberry Pi / ARM NAS hosts only outside pull requests.
       - name: Set up QEMU
         if: github.event_name != 'pull_request'
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
