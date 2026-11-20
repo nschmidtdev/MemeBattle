@@ -458,6 +458,46 @@ export function loadImage(url: string): Promise<HTMLImageElement> {
 }
 
 /**
+ * Render a meme to a PNG blob. Without an explicit `maxDim` the export uses the
+ * image's natural resolution, bounded to a sane PNG size. Returns null on any
+ * failure (image, canvas or missing DOM).
+ */
+export async function renderMemePngBlob(
+  template: TemplateData,
+  submission: CaptionSubmission,
+  maxDim?: number,
+): Promise<Blob | null> {
+  try {
+    if (typeof document === 'undefined') return null
+
+    await ensureMemeFontsReady()
+    const image = await loadImage(imageUrl(template.imageKey))
+    const target = maxDim ?? downloadTargetSize(image.naturalWidth, image.naturalHeight)
+    const canvas = renderMeme(template, submission, image, target)
+    return await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
+  } catch {
+    return null
+  }
+}
+
+/** Offer an existing blob as a browser download. */
+export function downloadBlob(blob: Blob, filename: string): void {
+  if (typeof document === 'undefined') return
+  const objectUrl = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  const safeName = filename.trim() || 'download'
+  anchor.href = objectUrl
+  anchor.download = safeName
+  anchor.rel = 'noopener'
+  anchor.style.display = 'none'
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  // Give the browser a moment to start the download before releasing the blob.
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1500)
+}
+
+/**
  * Render the meme at download resolution and trigger a browser download.
  * Returns false on any failure (image, canvas, blob or missing DOM).
  */
@@ -467,28 +507,10 @@ export async function downloadMemePng(
   filename: string,
 ): Promise<boolean> {
   try {
-    if (typeof document === 'undefined') return false
-
-    await ensureMemeFontsReady()
-    const image = await loadImage(imageUrl(template.imageKey))
-    // Export at the image's natural resolution, bounded to a sane PNG size.
-    const target = downloadTargetSize(image.naturalWidth, image.naturalHeight)
-    const canvas = renderMeme(template, submission, image, target)
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
+    const blob = await renderMemePngBlob(template, submission)
     if (!blob) return false
-
-    const objectUrl = URL.createObjectURL(blob)
-    const anchor = document.createElement('a')
     const safeName = filename.trim() || 'meme'
-    anchor.href = objectUrl
-    anchor.download = /\.png$/i.test(safeName) ? safeName : `${safeName}.png`
-    anchor.rel = 'noopener'
-    anchor.style.display = 'none'
-    document.body.appendChild(anchor)
-    anchor.click()
-    anchor.remove()
-    // Give the browser a moment to start the download before releasing the blob.
-    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1500)
+    downloadBlob(blob, /\.png$/i.test(safeName) ? safeName : `${safeName}.png`)
     return true
   } catch {
     return false

@@ -10,7 +10,9 @@ import type {
   TemplateData,
 } from '@/lib/types'
 import MemeView from '@/components/MemeView'
-import { downloadMemePng } from '@/lib/meme'
+import Icon from '@/components/Icon'
+import { downloadBlob, downloadMemePng, renderMemePngBlob } from '@/lib/meme'
+import { createZip, type ZipEntry } from '@/lib/zip'
 
 /** Final gallery meme; the server adds its round rank. */
 type GalleryMeme = FinalMeme & { rank?: number }
@@ -164,69 +166,25 @@ function Avatar({ entry, size = 'h-9 w-9 text-base' }: { entry: { username: stri
   )
 }
 
-/** Inline stroke icons for the card's download button (no text, no emoji). */
+/** Icons are SVG files under public/res/icons — see components/Icon.tsx. */
 function DownloadIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      className="h-5 w-5"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M12 3v12" />
-      <path d="m7 10 5 5 5-5" />
-      <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
-    </svg>
-  )
+  return <Icon name="download" className="h-5 w-5" />
 }
 
 function CheckIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      className="h-5 w-5"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2.4}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="m5 12 5 5L20 7" />
-    </svg>
-  )
+  return <Icon name="check" className="h-5 w-5" />
 }
 
 function AlertIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 24 24"
-      className="h-5 w-5"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
-      <path d="M12 9v4" />
-      <path d="M12 17h.01" />
-    </svg>
-  )
+  return <Icon name="alert" className="h-5 w-5" />
 }
 
 function SpinnerIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5 animate-spin" fill="none">
-      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth={2} opacity={0.25} />
-      <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
-    </svg>
-  )
+  return <Icon name="spinner" className="h-5 w-5 animate-spin" />
+}
+
+function ArchiveIcon() {
+  return <Icon name="archive" className="h-4 w-4" />
 }
 
 /**
@@ -404,6 +362,151 @@ function MemeGallery({
       ))}
       {memes.length === 0 && <p className="col-span-full text-center text-sm text-dim">{empty}</p>}
     </div>
+  )
+}
+
+/** Long edge used inside the ZIP; single downloads keep their natural size. */
+const ZIP_EXPORT_MAX_DIM = 2048
+/** How long the ZIP button keeps its success/failure label. */
+const ZIP_RESET_MS = 4000
+
+function slugName(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'meme'
+}
+
+/** `r03-01-alice.png` — zero-padded so archive tools group rounds naturally. */
+function zipMemeName(meme: CardMeme & { rank: number }, used: Set<string>): string {
+  const base = `r${String(meme.round).padStart(2, '0')}-${String(meme.rank).padStart(2, '0')}-${slugName(meme.username)}`
+  let name = `${base}.png`
+  for (let i = 2; used.has(name); i++) name = `${base}-${i}.png`
+  used.add(name)
+  return name
+}
+
+function localDateStamp(): string {
+  const now = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+}
+
+/**
+ * Builds one PNG per meme in the browser and offers them as a single ZIP.
+ * Rendering is sequential so a 60-meme game never holds 60 canvases at once;
+ * the button reports progress and skips memes whose image cannot be loaded.
+ */
+function DownloadAllButton({ memes }: { memes: Array<CardMeme & { rank: number }> }) {
+  const [status, setStatus] = useState<'idle' | 'working' | 'done' | 'error'>('idle')
+  const [progress, setProgress] = useState(0)
+  const [saved, setSaved] = useState(0)
+  const [skipped, setSkipped] = useState(0)
+  const runRef = useRef(0)
+  const resetRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    return () => {
+      runRef.current += 1
+      if (resetRef.current) clearTimeout(resetRef.current)
+    }
+  }, [])
+
+  const scheduleReset = () => {
+    if (resetRef.current) clearTimeout(resetRef.current)
+    resetRef.current = setTimeout(() => {
+      setStatus((current) => (current === 'working' ? current : 'idle'))
+      setSkipped(0)
+    }, ZIP_RESET_MS)
+  }
+
+  const start = async () => {
+    if (status === 'working') return
+    if (resetRef.current) clearTimeout(resetRef.current)
+    const runId = ++runRef.current
+    setStatus('working')
+    setProgress(0)
+    setSaved(0)
+    setSkipped(0)
+
+    const entries: ZipEntry[] = []
+    const used = new Set<string>()
+    let failures = 0
+
+    for (let i = 0; i < memes.length; i++) {
+      if (runRef.current !== runId) return
+      const meme = memes[i]
+      if (meme.template && meme.submission) {
+        const blob = await renderMemePngBlob(meme.template, meme.submission, ZIP_EXPORT_MAX_DIM)
+        if (runRef.current !== runId) return
+        if (blob) {
+          entries.push({ name: zipMemeName(meme, used), data: new Uint8Array(await blob.arrayBuffer()) })
+          if (runRef.current !== runId) return
+        } else {
+          failures++
+        }
+      } else {
+        failures++
+      }
+      setProgress(i + 1)
+      setSkipped(failures)
+      // Let the progress label paint before the next render blocks the thread.
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
+
+    if (runRef.current !== runId) return
+    if (entries.length === 0) {
+      setStatus('error')
+      scheduleReset()
+      return
+    }
+
+    try {
+      const zip = createZip(entries, { modifiedAt: new Date() })
+      downloadBlob(zip, `meme-battle-${localDateStamp()}.zip`)
+      setSaved(entries.length)
+      setSkipped(failures)
+      setStatus('done')
+    } catch {
+      setStatus('error')
+    }
+    scheduleReset()
+  }
+
+  const label =
+    status === 'working'
+      ? `Zipping ${progress}/${memes.length}…`
+      : status === 'error'
+        ? 'ZIP failed — try again'
+        : status === 'done'
+          ? skipped > 0
+            ? `${saved} saved · ${skipped} skipped`
+            : `${saved} memes saved`
+          : `Download all as ZIP (${memes.length})`
+
+  return (
+    <button
+      type="button"
+      className={`inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border px-3 py-1.5 text-xs font-bold transition disabled:cursor-default ${
+        status === 'done'
+          ? 'border-mint/60 bg-mint/10 text-mint'
+          : status === 'error'
+            ? 'border-rose/60 bg-rose/10 text-rose'
+            : 'border-line bg-night2 text-ink hover:border-sky'
+      }`}
+      onClick={start}
+      disabled={status === 'working'}
+      aria-busy={status === 'working'}
+      title="One PNG per meme (long edge up to 2048 px), packaged as a ZIP"
+    >
+      {status === 'working' ? (
+        <SpinnerIcon />
+      ) : status === 'done' ? (
+        <CheckIcon />
+      ) : status === 'error' ? (
+        <AlertIcon />
+      ) : (
+        <ArchiveIcon />
+      )}
+      <span aria-live="polite">{label}</span>
+    </button>
   )
 }
 
@@ -647,9 +750,12 @@ export default function ResultsView(props: Props) {
         <div className="grid items-start gap-5 lg:grid-cols-[1fr_360px]">
           {/* ------------------------------------------------ memes: best first */}
           <div className="order-2 lg:order-1">
-            <h3 className="mb-3 text-center text-sm font-bold uppercase tracking-widest text-dim">
-              All memes — best rated first
-            </h3>
+            <div className="mb-3 flex flex-col items-center gap-2">
+              <h3 className="text-center text-sm font-bold uppercase tracking-widest text-dim">
+                All memes — best rated first
+              </h3>
+              {gallery.length > 0 && <DownloadAllButton memes={gallery} />}
+            </div>
             <MemeGallery memes={gallery} myId={props.myId} empty="No memes made it… 🤷" />
           </div>
 

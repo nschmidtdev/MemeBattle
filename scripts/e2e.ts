@@ -197,6 +197,13 @@ async function runSuite() {
     seedImg.status,
   )
 
+  const icon = await http('/res/icons/download.svg')
+  ok(
+    'UI icon served from /res/icons',
+    icon.status === 200 && (icon.headers.get('content-type') ?? '').includes('svg'),
+    icon.status,
+  )
+
   // Directory keys must be a plain 404, never a crash or a listing.
   const dirRoot = await http(`/api/images/${encodeURIComponent('public:')}`)
   ok('GET /api/images/public: (directory) -> 404', dirRoot.status === 404, dirRoot.status)

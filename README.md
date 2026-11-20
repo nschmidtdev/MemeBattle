@@ -30,6 +30,8 @@ meme-maker wins. No accounts, no filters, no mercy.
 - **Animated GIF templates** — GIFs animate in the editor, voting and result
   galleries (the live image sits under a transparent text layer); PNG downloads
   are still frames.
+- **Download all** — the final gallery can pack every meme of the game into one
+  ZIP (one PNG per meme, long edge up to 2048 px).
 - **Content-only admin panel** — manage packs and templates via `/admin`. No user
   management, no reporting, no moderation.
 - **Admin workspace** — fixed-height pack sidebar and template grid with internal
@@ -233,10 +235,19 @@ src/
   lib/                        Shared types, scoring, storage, auth, config, env loading
 prisma/                       Schema + seed (Classic pack with 7 SVG templates)
 public/seed/                  Seeded template images (hand-made SVGs)
+public/res/icons/             UI icons as .svg files (rendered via components/Icon.tsx)
 scripts/start.mjs             Production start with NODE_ENV=production
 scripts/cleanup-uploads.ts    Removes unreferenced files from UPLOAD_DIR
 scripts/e2e.ts                End-to-end smoke test (socket.io-client, no browser needed)
 ```
+
+### UI icons
+
+Keep SVGs out of components: put a 24×24 `viewBox` file in
+`public/res/icons/` and render it with `<Icon name="file-name" className="h-5 w-5" />`.
+The component uses the file as a CSS mask, so `currentColor`, Tailwind text
+colours and `animate-spin` behave exactly like an inline SVG — without the path
+data living in the bundle.
 
 ## Tech stack
 
