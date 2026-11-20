@@ -15,6 +15,7 @@
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
     "uploads:cleanup": "tsx scripts/cleanup-uploads.ts",
+    "import:pack": "tsx scripts/import-pack.ts",
     "db:studio": "prisma studio",
     "test": "vitest run",
     "test:watch": "vitest",
