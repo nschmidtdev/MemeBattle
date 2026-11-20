@@ -62,6 +62,10 @@ meme-maker wins. No accounts, no filters, no mercy.
   meme: no creator name, avatar or ID is sent to the voters. Identities are
   revealed with the round results. Votes and Meme Buddy picks stay secret until
   then as well.
+- **Forced submissions (default)** — when the caption timer runs out, the
+  current draft is submitted automatically, even if it is empty: nobody silently
+  becomes a spectator. Hosts can turn it off in the lobby to allow spectators
+  again.
 - **Böse memes allowed** — there is intentionally no profanity filter and no
   auto-moderation. What you caption is what the room gets.
 - **Self-hosted & private** — Docker Compose or one all-in-one container with

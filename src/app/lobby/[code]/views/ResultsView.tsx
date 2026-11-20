@@ -157,9 +157,8 @@ function rankGallery(memes: GalleryMeme[]): Array<GalleryMeme & { rank: number }
 
 /** Hide gallery entries whose submission has no non-empty text at all. */
 function hasVisibleContent(m: FinalMeme): boolean {
-  const lines = m.submission?.lines ?? []
-  if (lines.some((l) => typeof l.text === 'string' && l.text.trim() !== '')) return true
-  return Object.values(m.submission?.texts ?? {}).some((t) => typeof t === 'string' && t.trim() !== '')
+  // Auto-submitted drafts can be empty; the template alone is still a meme.
+  return Boolean(m.template)
 }
 
 function Avatar({ entry, size = 'h-9 w-9 text-base' }: { entry: { username: string; color: string }; size?: string }) {

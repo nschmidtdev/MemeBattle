@@ -27,6 +27,7 @@ export default function LobbyView({ state, myId, onSettings, onStart, onKick, er
   const [rerolls, setRerolls] = useState(state.settings.rerolls)
   const [captionTime, setCaptionTime] = useState(state.settings.captionTime)
   const [voteTime, setVoteTime] = useState(state.settings.voteTime)
+  const [forceSubmission, setForceSubmission] = useState(state.settings.forceSubmission)
   const [packs, setPacks] = useState<PackOption[] | null>(null)
   const [packsError, setPacksError] = useState<string | null>(null)
   const [startPending, setStartPending] = useState(false)
@@ -40,6 +41,7 @@ export default function LobbyView({ state, myId, onSettings, onStart, onKick, er
     setRerolls(state.settings.rerolls)
     setCaptionTime(state.settings.captionTime)
     setVoteTime(state.settings.voteTime)
+    setForceSubmission(state.settings.forceSubmission)
   }, [state.settings])
 
   // Don't clobber the lobby name while the host is typing: every settings echo
@@ -251,6 +253,26 @@ export default function LobbyView({ state, myId, onSettings, onStart, onKick, er
             <input type="range" min={5} max={30} step={1} aria-valuetext={`${voteTime} seconds`} className={sliderCls} value={voteTime} disabled={!isHost}
               onChange={(e) => { setVoteTime(+e.target.value); onSettings({ voteTime: +e.target.value }) }} />
             <span className="mt-0.5 flex justify-between text-[10px] tabular-nums text-dim"><span>5s</span><span>30s</span></span>
+          </label>
+
+          <label className="flex items-start gap-2 sm:col-span-2">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 flex-none accent-punch"
+              checked={forceSubmission}
+              disabled={!isHost}
+              onChange={(e) => {
+                setForceSubmission(e.target.checked)
+                onSettings({ forceSubmission: e.target.checked })
+              }}
+            />
+            <span className="text-sm font-semibold">
+              Everyone must submit
+              <span className="block text-xs font-normal leading-snug text-dim">
+                When the timer runs out, each player&apos;s current draft is submitted automatically.
+                Off: players without a submission only spectate.
+              </span>
+            </span>
           </label>
 
           <div className="sm:col-span-2">

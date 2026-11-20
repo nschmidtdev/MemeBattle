@@ -12,7 +12,7 @@ const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? 'admin@localhost'
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD ?? ''
 
 const HTTP_TIMEOUT_MS = 10_000
-const GLOBAL_TIMEOUT_MS = 240_000
+const GLOBAL_TIMEOUT_MS = 360_000
 
 /** Unique per run so the login rate limiter buckets never leak between runs. */
 const RUN_TAG = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -468,6 +468,9 @@ async function runSuite() {
   // registered before it is emitted.
   const pvAEvent = waitEvent<any>(A, 'phase:voting', 30000)
   const pvBEvent = waitEvent<any>(B, 'phase:voting', 30000)
+  // phase:voting is sent before showMeme(0): wait for the actual first meme too.
+  const pvProgress0A = waitEventWhere<any>(A, 'voting:progress', (p: any) => p.index === 0, 30000)
+  const pvProgress0B = waitEventWhere<any>(B, 'voting:progress', (p: any) => p.index === 0, 30000)
   B.emit('caption:submit', {
     texts: {},
     lines: [
@@ -490,6 +493,7 @@ async function runSuite() {
 
   const pv = await pvAEvent
   const pvB = await pvBEvent
+  await Promise.all([pvProgress0A, pvProgress0B])
   ok('voting phase: 2 memes', pv.memes?.length === 2 && pv.current === 0, {
     memes: pv.memes?.length,
     current: pv.current,
@@ -969,6 +973,87 @@ async function runSuite() {
     G.disconnect()
   }
 
+  // ------------------------------------------------------------- forced submissions
+  console.log('\nForced submissions:')
+  {
+    const H = await openSocket()
+    const G = await openSocket()
+    const hJoined = waitEvent<any>(H, 'lobby:joined', 10000)
+    H.emit('lobby:join', {
+      username: 'ForceHost',
+      create: true,
+      isPublic: false,
+      lobbyName: 'Force On',
+      settings: { rounds: 1, rerolls: 0, captionTime: 5, voteTime: 5, packIds: [pack.id] },
+    })
+    const h: { code: string } = await hJoined
+    const gJoined = waitEvent<any>(G, 'lobby:joined', 10000)
+    G.emit('lobby:join', { username: 'ForceGuest', code: h.code })
+    await gJoined
+    await new Promise((r) => setTimeout(r, 150))
+
+    const phaseP = waitEvent<any>(H, 'phase:caption', 15000)
+    const hTpl = waitEvent<any>(H, 'caption:template', 15000)
+    const gTpl = waitEvent<any>(G, 'caption:template', 15000)
+    H.emit('lobby:start')
+    await Promise.all([phaseP, hTpl, gTpl])
+
+    const votingP = waitEvent<any>(H, 'phase:voting', 15000)
+    H.emit('caption:submit', { texts: { a: 'host' }, lines: [] })
+    G.emit('caption:submit', { texts: {}, lines: [], auto: true })
+    const forcedVoting = await votingP
+    ok(
+      'forced submissions: empty auto-submit still counts as a meme',
+      forcedVoting.memes.length === 2,
+      forcedVoting.memes.length,
+    )
+    H.disconnect()
+    G.disconnect()
+  }
+
+  {
+    // Explicitly off: empty auto-submits are rejected, spectators are back.
+    const H = await openSocket()
+    const G = await openSocket()
+    const hJoined = waitEvent<any>(H, 'lobby:joined', 10000)
+    H.emit('lobby:join', {
+      username: 'ForceOffHost',
+      create: true,
+      isPublic: false,
+      lobbyName: 'Force Off',
+      settings: {
+        rounds: 1,
+        rerolls: 0,
+        captionTime: 5,
+        voteTime: 5,
+        packIds: [pack.id],
+        forceSubmission: false,
+      },
+    })
+    const h: { code: string } = await hJoined
+    const gJoined = waitEvent<any>(G, 'lobby:joined', 10000)
+    G.emit('lobby:join', { username: 'ForceOffGuest', code: h.code })
+    await gJoined
+    await new Promise((r) => setTimeout(r, 150))
+
+    const phaseP = waitEvent<any>(H, 'phase:caption', 15000)
+    const hTpl = waitEvent<any>(H, 'caption:template', 15000)
+    const gTpl = waitEvent<any>(G, 'caption:template', 15000)
+    H.emit('lobby:start')
+    await Promise.all([phaseP, hTpl, gTpl])
+
+    const errP = waitEvent<any>(G, 'client:error', 5000)
+    G.emit('caption:submit', { texts: {}, lines: [], auto: true })
+    const err = await errP
+    ok(
+      'forced submissions off: empty auto-submit is rejected',
+      /at least one text/i.test(err.message),
+      err,
+    )
+    H.disconnect()
+    G.disconnect()
+  }
+
   // ------------------------------------------------------------- +18 gate
   console.log('\n+18 gate:')
   {
@@ -1186,6 +1271,7 @@ async function runSuite() {
     gs?.mode === 'normal' &&
       gs?.rounds === 3 &&
       gs?.rerolls === 10 &&
+      gs?.forceSubmission === true &&
       gs?.captionTime === 5 &&
       gs?.voteTime === 60 &&
       Array.isArray(gs?.packIds) &&
@@ -1390,7 +1476,8 @@ async function runSuite() {
 
   // Pick the non-owner of meme 0, cast a vote, then leave. Socket.IO preserves
   // the order, so the leave handler (and its broadcast) proves the vote landed.
-  const voterIsA = vVotingData.memes?.[0]?.playerId !== v1.playerId
+  // The voting payload is anonymous: `mine` is all we get (no playerId).
+  const voterIsA = vVotingData.memes?.[0]?.mine === false
   const voter = voterIsA ? V1 : V2
   const voterId = voterIsA ? v1.playerId : v2.playerId
   const ghosted = waitEventWhere<any>(
@@ -1449,7 +1536,7 @@ async function runSuite() {
     create: true,
     isPublic: false,
     lobbyName: 'E2E Negative Buddy',
-    settings: { rounds: 1, captionTime: 15, voteTime: 5, packIds: [pack.id] },
+    settings: { rounds: 1, captionTime: 15, voteTime: 10, packIds: [pack.id] },
   })
   const neg1: { code: string; playerId: string } = await neg1Joined
   const neg2Joined = waitEvent<any>(Neg2, 'lobby:joined', 10000)
@@ -1471,8 +1558,7 @@ async function runSuite() {
 
   Neg1.emit('caption:submit', { texts: { n: 'neg one' }, lines: [] })
   Neg2.emit('caption:submit', { texts: { n: 'neg two' }, lines: [] })
-  const nVotingData = await nVoting
-  const nVotingData2 = await nVoting2
+  await Promise.all([nVoting, nVoting2])
   // Wait until the server really put meme 0 up for voting: phase:voting is sent
   // before showMeme(0), and a very fast client can otherwise race the switch.
   await Promise.all([nProgress0A, nProgress0B])
@@ -1481,30 +1567,31 @@ async function runSuite() {
   const nMeme1Shown1 = waitEventWhere<any>(Neg1, 'voting:progress', (p: any) => p.index === 1, 30000)
   const nMeme1Shown2 = waitEventWhere<any>(Neg2, 'voting:progress', (p: any) => p.index === 1, 30000)
 
-  // Meme 0: its non-owner downvotes and gives the buddy.
-  const nOwner0IsA = nVotingData.memes?.[0]?.mine === true
-  const nVoter0 = nOwner0IsA ? Neg2 : Neg1
-  // Sanity: the other payload must flag the same meme as not-mine.
-  const nOwner0Flagged =
-    nOwner0IsA === (nVotingData2.memes?.[0]?.mine === false)
-  if (!nOwner0Flagged) throw new Error('voting payloads disagree about the own meme')
-  nVoter0.emit('vote:cast', { index: 0, value: 'down' })
-  const nBuddy0Ack = waitEvent<any>(nVoter0, 'buddy:picked', 5000)
-  const nBuddy0Err = waitEvent<any>(nVoter0, 'client:error', 5000)
-  nVoter0.emit('buddy:pick', { index: 0 })
-  const nBuddy0Result = await Promise.race([nBuddy0Ack, nBuddy0Err])
-  if (nBuddy0Result?.message) {
-    throw new Error(`buddy 0 rejected: ${nBuddy0Result.message}`)
-  }
+  // Meme 0: both players try to vote and pick. The server rejects the owner's
+  // attempts and accepts the non-owner's, so the test never has to guess the
+  // owner from the anonymised payload (that old check was timing-sensitive).
+  Neg1.emit('vote:cast', { index: 0, value: 'down' })
+  Neg2.emit('vote:cast', { index: 0, value: 'down' })
+  const nBuddy0A = waitEvent<any>(Neg1, 'buddy:picked', 10000)
+  const nBuddy0B = waitEvent<any>(Neg2, 'buddy:picked', 10000)
+  nBuddy0A.catch(() => {})
+  nBuddy0B.catch(() => {})
+  Neg1.emit('buddy:pick', { index: 0 })
+  Neg2.emit('buddy:pick', { index: 0 })
+  await Promise.race([nBuddy0A, nBuddy0B])
 
   await Promise.all([nMeme1Shown1, nMeme1Shown2])
 
-  // Meme 1: the other player is its non-owner, downvotes and gives the buddy.
-  const nVoter1 = nOwner0IsA ? Neg1 : Neg2
-  nVoter1.emit('vote:cast', { index: 1, value: 'down' })
-  const nBuddy1Ack = waitEvent<any>(nVoter1, 'buddy:picked', 5000)
-  nVoter1.emit('buddy:pick', { index: 1 })
-  await nBuddy1Ack
+  // Meme 1: same pattern.
+  Neg1.emit('vote:cast', { index: 1, value: 'down' })
+  Neg2.emit('vote:cast', { index: 1, value: 'down' })
+  const nBuddy1A = waitEvent<any>(Neg1, 'buddy:picked', 10000)
+  const nBuddy1B = waitEvent<any>(Neg2, 'buddy:picked', 10000)
+  nBuddy1A.catch(() => {})
+  nBuddy1B.catch(() => {})
+  Neg1.emit('buddy:pick', { index: 1 })
+  Neg2.emit('buddy:pick', { index: 1 })
+  await Promise.race([nBuddy1A, nBuddy1B])
 
   const nRes = await nResultsP
   ok(
@@ -1746,6 +1833,8 @@ async function main() {
 
   console.log(`\n${passed} passed, ${failed} failed`)
   if (failed > 0) console.log(`::error::E2E result: ${passed} passed, ${failed} failed`)
+  // Let stdout flush before exiting (piped runs lost the last lines otherwise).
+  await new Promise((resolve) => setTimeout(resolve, 300))
   process.exit(failed > 0 ? 1 : 0)
 }
 

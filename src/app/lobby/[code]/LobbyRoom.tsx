@@ -501,7 +501,13 @@ export default function LobbyRoom({ code }: { code: string }) {
   }, [state?.phase, currentMemeIndex, roundResult, gameOver])
 
   // ---------------------------------------------------------------- render
-  const timeLeftSec = endsAtRef.current !== null ? Math.max(0, (endsAtRef.current - Date.now()) / 1000) : null
+  const timeLeftSec =
+    endsAtRef.current !== null
+      ? Math.max(0, (endsAtRef.current - Date.now()) / 1000)
+      : // Caption timer already ran out (the tick clears endsAtRef at zero).
+        state?.phase === 'caption'
+        ? 0
+        : null
   const phaseTotal = state
     ? state.phase === 'caption'
       ? (caption?.timeTotal || state.settings.captionTime)
@@ -713,6 +719,8 @@ export default function LobbyRoom({ code }: { code: string }) {
           mode={caption.mode}
           rule={caption.rule}
           maxTextLen={caption.maxTextLen}
+          timeLeft={timeLeftSec}
+          forceSubmission={state.settings.forceSubmission}
           submitted={caption.submitted}
           submission={caption.submission}
           onReroll={rerollTemplate}

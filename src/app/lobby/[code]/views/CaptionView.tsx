@@ -25,6 +25,10 @@ interface Props {
   maxTextLen: number
   onReroll: () => void
   onSubmit: (submission: CaptionSubmission) => void
+  /** Caption countdown in seconds; null when no timer is running. */
+  timeLeft?: number | null
+  /** Auto-submit the current draft when the timer expires (default mode). */
+  forceSubmission?: boolean
   /** Controlled by the parent so a reconnected player resumes read-only. */
   submitted?: boolean
   submission?: CaptionSubmission | null
@@ -64,6 +68,8 @@ export default function CaptionView({
   maxTextLen,
   onReroll,
   onSubmit,
+  timeLeft = null,
+  forceSubmission = true,
   submitted,
   submission,
 }: Props) {
@@ -125,6 +131,31 @@ export default function CaptionView({
     return () => window.clearTimeout(timer)
   }, [rerollPending])
 
+  const submit = (auto = false) => {
+    if (isSubmitted || rerollPending) return
+    const cleaned = lines.filter((l) => l.text.trim() !== '').map(clampFreeformLine)
+    if (!auto && cleaned.length === 0) return
+    const activePadding =
+      padding.top > 0 || padding.bottom > 0 ? { top: padding.top, bottom: padding.bottom } : undefined
+    const draft: CaptionSubmission = { texts: {}, lines: cleaned }
+    if (activePadding) draft.padding = activePadding
+    if (auto) draft.auto = true
+    onSubmit(draft)
+    setLocalSubmitted(true)
+  }
+
+  // Forced participation: the moment the countdown hits zero, send whatever is
+  // in the editor (even an empty draft). The server keeps a short grace window.
+  const autoSubmittedRef = useRef(false)
+  useEffect(() => {
+    if (!template || !forceSubmission || isSubmitted || autoSubmittedRef.current) return
+    if (typeof timeLeft !== 'number' || timeLeft > 0) return
+    autoSubmittedRef.current = true
+    submit(true)
+    // submit reads the latest draft; the ref guards against re-entry.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [template, forceSubmission, isSubmitted, timeLeft])
+
   if (!template) {
     return (
       <section className="rounded-2xl border border-line bg-card p-8 text-center shadow-xl">
@@ -138,15 +169,7 @@ export default function CaptionView({
 
   const hasText = lines.some((l) => l.text.trim() !== '')
   const canReroll = mode === 'normal' && rerollsLeft > 0
-
-  const submit = () => {
-    if (isSubmitted || rerollPending || !hasText) return
-    const cleaned = lines.filter((l) => l.text.trim() !== '').map(clampFreeformLine)
-    const activePadding =
-      padding.top > 0 || padding.bottom > 0 ? { top: padding.top, bottom: padding.bottom } : undefined
-    onSubmit(activePadding ? { texts: {}, lines: cleaned, padding: activePadding } : { texts: {}, lines: cleaned })
-    setLocalSubmitted(true)
-  }
+  const timeIsUp = forceSubmission && typeof timeLeft === 'number' && timeLeft <= 0
 
   const reroll = () => {
     if (isSubmitted || rerollPending || !canReroll) return
@@ -207,6 +230,11 @@ export default function CaptionView({
       )}
 
       <div className="rounded-2xl border border-line bg-card p-3 shadow-xl sm:p-4">
+        {timeIsUp && !isSubmitted && (
+          <div className="mb-3 rounded-xl border border-sun/60 bg-sun/10 px-4 py-3 text-center font-semibold text-sun">
+            ⏰ Time&apos;s up — submitting your current draft…
+          </div>
+        )}
         {isSubmitted && (
           <div className="mb-3 rounded-xl border border-mint/50 bg-mint/10 px-4 py-3 text-center font-semibold text-mint">
             ✅ Submitted — waiting for the others…
@@ -227,7 +255,7 @@ export default function CaptionView({
           <button
             className="w-full rounded-xl bg-gradient-to-r from-punch to-punch2 py-3 text-lg font-extrabold uppercase tracking-wide text-night shadow-lg transition hover:brightness-110 active:translate-y-px disabled:cursor-default disabled:opacity-40"
             disabled={isSubmitted || rerollPending || !hasText}
-            onClick={submit}
+            onClick={() => submit()}
           >
             {isSubmitted ? 'Submitted ✓' : rerollPending ? 'Loading new template…' : hasText ? 'Send meme 🚀' : 'Write at least one text…'}
           </button>

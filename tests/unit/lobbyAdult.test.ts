@@ -26,6 +26,7 @@ function makeLobby(packIds: string[] = ['adult']) {
     voteTime: 10,
     packIds,
     lobbyName: 'Adult Test',
+    forceSubmission: true,
   }
   return { lobby: new Lobby('ADULT', 'Adult Test', false, settings, hooks), events }
 }

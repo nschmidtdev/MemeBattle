@@ -125,6 +125,11 @@ export interface CaptionSubmission {
   lines: FreeformLine[] // only used for freeform templates
   /** Optional whitespace bars around the template (omitted when inactive). */
   padding?: MemePadding
+  /**
+   * Sent by the client when the caption timer expires and forced submissions
+   * are enabled. The server accepts an otherwise empty draft for these.
+   */
+  auto?: boolean
 }
 
 export interface PlayerInfo {
@@ -254,6 +259,11 @@ export interface LobbySettings {
   voteTime: number // seconds per meme during voting
   packIds: string[]
   lobbyName: string
+  /**
+   * Everyone must submit before voting starts (default). When disabled, the
+   * round starts on the timer with whoever submitted ("spectators").
+   */
+  forceSubmission: boolean
 }
 
 /** Public template pack summary (home page and lobby settings). */

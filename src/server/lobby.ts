@@ -145,6 +145,8 @@ export function normalizeSettings(input: unknown): LobbySettings {
     voteTime: clampInt(raw.voteTime, 3, 60, 10),
     packIds: normalizePackIds(raw.packIds),
     lobbyName: sanitizeLobbyName(raw.lobbyName),
+    // Forced submissions are the default; only an explicit false opts out.
+    forceSubmission: raw.forceSubmission !== false,
   }
 }
 
@@ -594,7 +596,9 @@ export class Lobby {
         this.hooks.sendTo(pl.socketId, Events.CaptionTemplate, {
           template,
           rerollsLeft: this.canReroll() ? this.settings.rerolls : 0,
-          timeLeft: this.roundCaptionTime,
+          // Remaining time, not the full duration: a late template delivery or
+          // a reroll must never restart the client countdown.
+          timeLeft: Math.max(0, Math.ceil((this.captionEndsAt - Date.now()) / 1000)),
           timeTotal: this.roundCaptionTime,
           mode: this.settings.mode,
           rule: this.roundRule,
@@ -604,10 +608,13 @@ export class Lobby {
       }
     })
     const roundNumber = round
+    // Forced submissions: clients auto-submit their current draft when the
+    // timer hits zero. The grace covers client clock/render delay before voting starts.
+    const forcedGraceMs = this.settings.forceSubmission ? 2000 : 0
     this.schedule(() => {
       if (this.round !== roundNumber) return
       this.beginVoting()
-    }, this.roundCaptionTime * 1000)
+    }, this.roundCaptionTime * 1000 + forcedGraceMs)
   }
 
   private pickChaosRule(): ChaosRule | null {
@@ -999,11 +1006,15 @@ export class Lobby {
     }
     const hasAny =
       Object.values(texts).some((t) => t.trim() !== '') || lines.some((l) => l.text.trim() !== '')
-    if (!hasAny) return 'Add at least one text before submitting.'
+    // Forced participation: the client auto-submits the current draft (which may
+    // be empty) when the timer runs out. Manual empty submissions stay rejected.
+    const isAuto = submission?.auto === true && this.settings.forceSubmission
+    if (!hasAny && !isAuto) return 'Add at least one text before submitting.'
     const padding = normalizeMemePadding(submission?.padding)
     p.submission = padding ? { texts, lines, padding } : { texts, lines }
-    // Everyone in -> move on early (brief grace so clients see "submitted").
-    if ([...this.players.values()].every((pl) => pl.submission)) {
+    // Everyone connected in -> move on early (brief grace so clients see "submitted").
+    const connected = [...this.players.values()].filter((pl) => pl.connected)
+    if (connected.length > 0 && connected.every((pl) => pl.submission)) {
       this.schedule(() => this.beginVoting(), 1000)
     }
     return null

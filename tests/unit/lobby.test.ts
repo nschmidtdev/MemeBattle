@@ -19,10 +19,18 @@ describe('normalizeSettings', () => {
       voteTime: 10,
       packIds: [],
       lobbyName: 'Meme Lobby',
+      forceSubmission: true,
     })
     expect(normalizeSettings(null)).toEqual(normalizeSettings(undefined))
     expect(normalizeSettings({})).toEqual(normalizeSettings(undefined))
     expect(normalizeSettings('not-an-object')).toEqual(normalizeSettings(undefined))
+  })
+
+  it('only disables forced submissions for an explicit false', () => {
+    expect(normalizeSettings({ forceSubmission: false }).forceSubmission).toBe(false)
+    expect(normalizeSettings({ forceSubmission: true }).forceSubmission).toBe(true)
+    expect(normalizeSettings({ forceSubmission: 'false' }).forceSubmission).toBe(true)
+    expect(normalizeSettings({ forceSubmission: 0 }).forceSubmission).toBe(true)
   })
 
   it('keeps valid values', () => {
@@ -36,6 +44,7 @@ describe('normalizeSettings', () => {
       voteTime: 7,
       packIds: ['p1', 'p2'],
       lobbyName: 'Friday',
+      forceSubmission: true,
     })
   })
 
@@ -145,7 +154,16 @@ describe('normalizeSettings', () => {
 
   it('ignores unknown properties', () => {
     const settings = normalizeSettings({ rounds: 2, nonsense: true })
-    expect(settings).toEqual({ mode: 'normal', rounds: 2, rerolls: 10, captionTime: 45, voteTime: 10, packIds: [], lobbyName: 'Meme Lobby' })
+    expect(settings).toEqual({
+      mode: 'normal',
+      rounds: 2,
+      rerolls: 10,
+      captionTime: 45,
+      voteTime: 10,
+      packIds: [],
+      lobbyName: 'Meme Lobby',
+      forceSubmission: true,
+    })
   })
 })
 
