@@ -3,7 +3,7 @@
 # no DATABASE_URL and no POSTGRES_PASSWORD needed.
 services:
   app:
-    image: ${BUNDLED_IMAGE:-ghcr.io/nschmidtdev/memebattle:latest-bundled}
+    image: ${BUNDLED_IMAGE:-ghcr.io/nschmidtdev/memebattle:latest}
     restart: unless-stopped
     stop_grace_period: 30s
     ports:

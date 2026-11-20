@@ -22,7 +22,7 @@ env:
 
 jobs:
   build:
-    name: Build and publish
+    name: Build and publish (all-in-one + slim)
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -44,8 +44,26 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract image metadata
+      - name: Extract slim image metadata
         id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch,suffix=-slim
+            type=ref,event=pr,suffix=-slim
+            type=semver,pattern={{version}},suffix=-slim
+            type=semver,pattern={{major}}.{{minor}},suffix=-slim
+            type=sha,prefix=sha-,suffix=-slim
+            type=raw,value=latest-slim,enable={{is_default_branch}}
+            type=raw,value=slim,enable={{is_default_branch}}
+          labels: |
+            org.opencontainers.image.title=Meme Battle (slim)
+            org.opencontainers.image.description=Self-hosted multiplayer meme party game, app only with an external PostgreSQL
+            org.opencontainers.image.licenses=MIT
+
+      - name: Extract all-in-one image metadata
+        id: meta-bundled
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
@@ -56,22 +74,6 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=sha,prefix=sha-
             type=raw,value=latest,enable={{is_default_branch}}
-          labels: |
-            org.opencontainers.image.title=Meme Battle
-            org.opencontainers.image.description=Self-hosted multiplayer meme party game
-            org.opencontainers.image.licenses=MIT
-
-      - name: Extract bundled image metadata
-        id: meta-bundled
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=ref,event=branch,suffix=-bundled
-            type=ref,event=pr,suffix=-bundled
-            type=semver,pattern={{version}},suffix=-bundled
-            type=semver,pattern={{major}}.{{minor}},suffix=-bundled
-            type=sha,prefix=sha-,suffix=-bundled
             type=raw,value=latest-bundled,enable={{is_default_branch}}
             type=raw,value=bundled,enable={{is_default_branch}}
           labels: |
@@ -79,7 +81,7 @@ jobs:
             org.opencontainers.image.description=Self-hosted multiplayer meme party game with bundled PostgreSQL
             org.opencontainers.image.licenses=MIT
 
-      - name: Build and push app image
+      - name: Build and push slim image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -93,7 +95,7 @@ jobs:
           cache-from: type=gha,scope=app
           cache-to: type=gha,mode=max,scope=app
 
-      - name: Build and push bundled image
+      - name: Build and push all-in-one image
         uses: docker/build-push-action@v6
         with:
           context: .

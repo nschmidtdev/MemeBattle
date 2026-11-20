@@ -95,21 +95,22 @@ Remove them with `docker compose down -v` (this deletes all data).
 The `Docker image` workflow builds on every push to `main`, every `v*.*.*` tag and
 every pull request (build only, no push). It publishes two flavors on GHCR:
 
-- `ghcr.io/nschmidtdev/memebattle:latest` — **app only**, needs a PostgreSQL
-  (the repository Compose file starts one) or your own `DATABASE_URL`.
-- `ghcr.io/nschmidtdev/memebattle:latest-bundled` / `:bundled` — **all-in-one**
-  with PostgreSQL inside the same container; no DB service needed.
+- `ghcr.io/nschmidtdev/memebattle:latest` / `:bundled` — **all-in-one** with
+  PostgreSQL inside the same container; no DB service needed. This is the default
+  `latest` image.
+- `ghcr.io/nschmidtdev/memebattle:latest-slim` / `:slim` — **app only**, needs a
+  PostgreSQL (the repository Compose file starts one) or your own `DATABASE_URL`.
 
-Both flavors are published for `linux/amd64` and `linux/arm64` with tags for
-`latest`, `main`, `sha-<commit>` and release versions (`1.2.3`, `1.2`). The
-all-in-one flavor appends `-bundled` to every tag.
+Both flavors are published for `linux/amd64` and `linux/arm64`. The all-in-one
+image owns the plain tags (`latest`, `main`, `sha-<commit>`, `1.2.3`, `1.2`); the
+slim flavor appends `-slim` to every tag.
 
-To run the app-only image with the repository Compose file, set `APP_IMAGE` in
+To run the slim image with the repository Compose file, set `APP_IMAGE` in
 `.env`:
 
 ```sh
 # .env (also set POSTGRES_PASSWORD)
-APP_IMAGE=ghcr.io/nschmidtdev/memebattle:latest
+APP_IMAGE=ghcr.io/nschmidtdev/memebattle:latest-slim
 ```
 
 ```sh
@@ -119,7 +120,7 @@ docker compose up -d --no-build
 
 #### All-in-one: app + PostgreSQL in one container
 
-For a small self-hosted setup, the bundled image runs PostgreSQL inside the same
+For a small self-hosted setup, the default image runs PostgreSQL inside the same
 container. One container, one volume, no `DATABASE_URL`, no separate DB service:
 
 ```sh
@@ -128,7 +129,7 @@ docker run -d --name meme-battle \
   -p 3000:3000 \
   -v meme-battle-data:/data \
   -e ADMIN_PASSWORD='change-me' \
-  ghcr.io/nschmidtdev/memebattle:latest-bundled
+  ghcr.io/nschmidtdev/memebattle:latest
 ```
 
 Or with the bundled Compose file:
@@ -141,7 +142,7 @@ docker compose -f docker-compose.bundled.yml up -d
 Database and uploads both live in the `data` volume (`/data/pgdata` and
 `/data/uploads`). Back up that volume before upgrading the image. The bundled
 PostgreSQL major follows the Debian base image; for larger groups or existing
-managed databases, use the app-only image with an external PostgreSQL.
+managed databases, use the slim image with an external PostgreSQL.
 
 To build the all-in-one image locally instead of pulling it:
 
@@ -215,8 +216,8 @@ All configuration is via environment variables (see `.env.example`):
 | `DATABASE_URL`      | — (required)             | Postgres connection string. Compose builds it from `POSTGRES_PASSWORD`. |
 | `PORT`              | `3000`                   | HTTP port the app listens on (validated 1–65535). Docker: always 3000 inside the container. |
 | `APP_PORT`          | `3000`                   | Host port published by Docker Compose. |
-| `APP_IMAGE`         | `meme-battle-app:local`  | Image Compose runs. Set to `ghcr.io/nschmidtdev/memebattle:latest` to use the published image. |
-| `BUNDLED_IMAGE`     | `…/memebattle:latest-bundled` | Same for `docker-compose.bundled.yml`; no database configuration needed. |
+| `APP_IMAGE`         | `meme-battle-app:local`  | Image Compose runs. Set to `ghcr.io/nschmidtdev/memebattle:latest-slim` to use the published app-only image. |
+| `BUNDLED_IMAGE`     | `…/memebattle:latest`    | Same for `docker-compose.bundled.yml`; no database configuration needed. |
 | `APP_BIND`          | `0.0.0.0`                | Host interface published by Docker Compose (`127.0.0.1` for local-only). |
 | `CORS_ORIGIN`       | unset = same-origin only | Comma-separated extra allowed Socket.io origins (e.g. `https://a.example,http://192.168.1.10:3000`). Same-origin is always allowed; `*` allows all. |
 | `ADMIN_EMAIL`       | `admin@localhost` (Compose) | Admin login email, created on first boot. |
