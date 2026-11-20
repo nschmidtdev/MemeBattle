@@ -1459,6 +1459,9 @@ async function runSuite() {
   const nTpl2 = waitEvent<any>(Neg2, 'caption:template', 15000)
   const nVoting = waitEvent<any>(Neg1, 'phase:voting', 30000)
   const nVoting2 = waitEvent<any>(Neg2, 'phase:voting', 30000)
+  // Register before the round starts: progress(0) follows phase:voting immediately.
+  const nProgress0A = waitEventWhere<any>(Neg1, 'voting:progress', (p: any) => p.index === 0, 30000)
+  const nProgress0B = waitEventWhere<any>(Neg2, 'voting:progress', (p: any) => p.index === 0, 30000)
   Neg1.emit('lobby:start')
   await nCaption
   await Promise.all([nTpl1, nTpl2])
@@ -1467,6 +1470,9 @@ async function runSuite() {
   Neg2.emit('caption:submit', { texts: { n: 'neg two' }, lines: [] })
   const nVotingData = await nVoting
   const nVotingData2 = await nVoting2
+  // Wait until the server really put meme 0 up for voting: phase:voting is sent
+  // before showMeme(0), and a very fast client can otherwise race the switch.
+  await Promise.all([nProgress0A, nProgress0B])
 
   const nResultsP = waitEvent<any>(Neg1, 'round:results', 40000)
   const nMeme1Shown1 = waitEventWhere<any>(Neg1, 'voting:progress', (p: any) => p.index === 1, 30000)
@@ -1481,8 +1487,12 @@ async function runSuite() {
   if (!nOwner0Flagged) throw new Error('voting payloads disagree about the own meme')
   nVoter0.emit('vote:cast', { index: 0, value: 'down' })
   const nBuddy0Ack = waitEvent<any>(nVoter0, 'buddy:picked', 5000)
+  const nBuddy0Err = waitEvent<any>(nVoter0, 'client:error', 5000)
   nVoter0.emit('buddy:pick', { index: 0 })
-  await nBuddy0Ack
+  const nBuddy0Result = await Promise.race([nBuddy0Ack, nBuddy0Err])
+  if (nBuddy0Result?.message) {
+    throw new Error(`buddy 0 rejected: ${nBuddy0Result.message}`)
+  }
 
   await Promise.all([nMeme1Shown1, nMeme1Shown2])
 
