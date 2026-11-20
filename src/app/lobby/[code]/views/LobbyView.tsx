@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { LobbyState } from '@/lib/client'
 import type { PackOption } from '@/lib/types'
+import { formatDuration } from '@/lib/format'
 
 interface Props {
   state: LobbyState
@@ -186,18 +187,20 @@ export default function LobbyView({ state, myId, onSettings, onStart, onKick, er
 
           <label className="block">
             <span className="mb-1 flex justify-between text-xs font-semibold uppercase tracking-wider text-dim">
-              Caption time <span className="font-bold text-sun">{captionTime}s</span>
+              Caption time <span className="font-bold text-sun">{formatDuration(captionTime)}</span>
             </span>
-            <input type="range" min={15} max={120} step={5} className={sliderCls} value={captionTime} disabled={!isHost}
+            <input type="range" min={15} max={120} step={1} aria-valuetext={`${captionTime} seconds`} className={sliderCls} value={captionTime} disabled={!isHost}
               onChange={(e) => { setCaptionTime(+e.target.value); onSettings({ captionTime: +e.target.value }) }} />
+            <span className="mt-0.5 flex justify-between text-[10px] tabular-nums text-dim"><span>15s</span><span>2m</span></span>
           </label>
 
           <label className="block">
             <span className="mb-1 flex justify-between text-xs font-semibold uppercase tracking-wider text-dim">
-              Vote time / meme <span className="font-bold text-sun">{voteTime}s</span>
+              Vote time / meme <span className="font-bold text-sun">{formatDuration(voteTime)}</span>
             </span>
-            <input type="range" min={5} max={30} step={1} className={sliderCls} value={voteTime} disabled={!isHost}
+            <input type="range" min={5} max={30} step={1} aria-valuetext={`${voteTime} seconds`} className={sliderCls} value={voteTime} disabled={!isHost}
               onChange={(e) => { setVoteTime(+e.target.value); onSettings({ voteTime: +e.target.value }) }} />
+            <span className="mt-0.5 flex justify-between text-[10px] tabular-nums text-dim"><span>5s</span><span>30s</span></span>
           </label>
 
           <div className="sm:col-span-2">

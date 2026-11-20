@@ -12,6 +12,7 @@ import {
   type PublicLobbyInfo,
 } from '@/lib/client'
 import { Events, type PackOption } from '@/lib/types'
+import { formatDuration } from '@/lib/format'
 import { sounds } from '@/lib/sounds'
 
 type PendingAction = 'quick' | 'code' | 'create' | null
@@ -290,15 +291,17 @@ export default function StartPage() {
               </label>
               <label className="block">
                 <span className="mb-1 flex justify-between text-xs font-semibold uppercase tracking-wider text-dim">
-                  Caption <b className="text-sun">{captionTime}s</b>
+                  Caption <b className="text-sun">{formatDuration(captionTime)}</b>
                 </span>
-                <input type="range" min={15} max={120} step={5} className="w-full accent-punch" value={captionTime} onChange={(e) => setCaptionTime(+e.target.value)} />
+                <input type="range" min={15} max={120} step={1} aria-valuetext={`${captionTime} seconds`} className="w-full accent-punch" value={captionTime} onChange={(e) => setCaptionTime(+e.target.value)} />
+                <span className="mt-0.5 flex justify-between text-[10px] tabular-nums text-dim"><span>15s</span><span>2m</span></span>
               </label>
               <label className="block">
                 <span className="mb-1 flex justify-between text-xs font-semibold uppercase tracking-wider text-dim">
-                  Vote / meme <b className="text-sun">{voteTime}s</b>
+                  Vote / meme <b className="text-sun">{formatDuration(voteTime)}</b>
                 </span>
-                <input type="range" min={5} max={30} step={1} className="w-full accent-punch" value={voteTime} onChange={(e) => setVoteTime(+e.target.value)} />
+                <input type="range" min={5} max={30} step={1} aria-valuetext={`${voteTime} seconds`} className="w-full accent-punch" value={voteTime} onChange={(e) => setVoteTime(+e.target.value)} />
+                <span className="mt-0.5 flex justify-between text-[10px] tabular-nums text-dim"><span>5s</span><span>30s</span></span>
               </label>
             </div>
 

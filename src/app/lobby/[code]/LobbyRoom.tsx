@@ -11,6 +11,7 @@ import type {
   VoteValue,
 } from '@/lib/types'
 import { Events, MAX_REROLLS } from '@/lib/types'
+import { formatDuration } from '@/lib/format'
 import {
   clearIdentity,
   connectSocket,
@@ -489,8 +490,8 @@ export default function LobbyRoom({ code }: { code: string }) {
                 style={{ width: `${timerPct}%` }}
               />
             </div>
-            <span className={`w-9 text-right text-sm font-extrabold tabular-nums ${timerPct > 25 ? 'text-dim' : 'text-rose'}`}>
-              {Math.ceil(timeLeftSec)}
+            <span className={`w-16 text-right text-sm font-extrabold tabular-nums ${timerPct > 25 ? 'text-dim' : 'text-rose'}`}>
+              {formatDuration(timeLeftSec)}
             </span>
           </div>
         )}
