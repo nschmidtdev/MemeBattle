@@ -105,6 +105,8 @@ interface CatalogResponse {
   memes?: SourceItem[]
   fetchedAt?: string
   label?: string
+  /** Imgflip only: true when IMGFLIP_API_KEY is configured on the server. */
+  premium?: boolean
 }
 
 interface PacksResponse {
@@ -283,6 +285,10 @@ export default function ImgflipPackCreator({ onClose, onImported }: Props) {
   const [memesLoading, setMemesLoading] = useState(true)
   const [memesError, setMemesError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
+  const [premium, setPremium] = useState(false)
+  const [searchResults, setSearchResults] = useState<SourceItem[] | null>(null)
+  const [searchBusy, setSearchBusy] = useState(false)
+  const [searchError, setSearchError] = useState<string | null>(null)
   const [selected, setSelected] = useState<Set<string>>(() => new Set())
   const [hoverPreview, setHoverPreview] = useState<HoverPreview | null>(null)
   const [localNotice, setLocalNotice] = useState('')
@@ -304,6 +310,9 @@ export default function ImgflipPackCreator({ onClose, onImported }: Props) {
   const notifiedRef = useRef(false)
   const sourceRef = useRef<SourceId>('imgflip')
   const localUrlsRef = useRef<string[]>([])
+  /** Latest server search results; also keeps selected results alive across reloads. */
+  const searchResultsRef = useRef<SourceItem[] | null>(null)
+  const searchSeqRef = useRef(0)
 
   const revokeLocalUrls = useCallback(() => {
     for (const url of localUrlsRef.current) URL.revokeObjectURL(url)
@@ -355,15 +364,22 @@ export default function ImgflipPackCreator({ onClose, onImported }: Props) {
 
     setMemesLoading(true)
     setMemesError(null)
+    setSearchResults(null)
+    searchResultsRef.current = null
+    setSearchError(null)
     try {
       const data = await getJson<CatalogResponse>(definition.endpoint)
       if (sourceRef.current !== sourceId) return
       if (!Array.isArray(data.memes)) throw new Error('Unexpected catalog response.')
       setMemes(data.memes)
+      setPremium(sourceId === 'imgflip' ? data.premium === true : false)
       setFetchedAt(typeof data.fetchedAt === 'string' ? data.fetchedAt : null)
       // Keep a refetch from silently retaining ids that disappeared upstream.
       setSelected((previous) => {
-        const available = new Set(data.memes?.map((meme) => meme.sourceId) ?? [])
+        const available = new Set([
+          ...(data.memes ?? []).map((meme) => meme.sourceId),
+          ...(searchResultsRef.current ?? []).map((meme) => meme.sourceId),
+        ])
         const next = new Set([...previous].filter((id) => available.has(id)))
         return next.size === previous.size ? previous : next
       })
@@ -374,6 +390,54 @@ export default function ImgflipPackCreator({ onClose, onImported }: Props) {
       if (sourceRef.current === sourceId) setMemesLoading(false)
     }
   }, [])
+
+  useEffect(() => {
+    if (source !== 'imgflip' || !premium) {
+      searchSeqRef.current += 1
+      setSearchResults(null)
+      searchResultsRef.current = null
+      setSearchBusy(false)
+      setSearchError(null)
+      return
+    }
+    const term = query.trim()
+    if (term.length < 2) {
+      searchSeqRef.current += 1
+      setSearchResults(null)
+      searchResultsRef.current = null
+      setSearchBusy(false)
+      setSearchError(null)
+      return
+    }
+
+    const seq = ++searchSeqRef.current
+    setSearchBusy(true)
+    setSearchError(null)
+    // Debounce: one premium request per pause, not per keystroke.
+    const timer = setTimeout(() => {
+      void getJson<CatalogResponse>(
+        `/api/admin/meme-sources/imgflip?q=${encodeURIComponent(term)}`,
+      )
+        .then((data) => {
+          if (searchSeqRef.current !== seq) return
+          if (!Array.isArray(data.memes)) throw new Error('Unexpected search response.')
+          searchResultsRef.current = data.memes
+          setSearchResults(data.memes)
+        })
+        .catch((error: unknown) => {
+          if (searchSeqRef.current !== seq) return
+          if (error instanceof HttpError && error.status === 401) return
+          searchResultsRef.current = []
+          setSearchResults([])
+          setSearchError(errorMessage(error))
+        })
+        .finally(() => {
+          if (searchSeqRef.current === seq) setSearchBusy(false)
+        })
+    }, 400)
+
+    return () => clearTimeout(timer)
+  }, [source, premium, query])
 
   useEffect(() => {
     sourceRef.current = source
@@ -537,6 +601,8 @@ export default function ImgflipPackCreator({ onClose, onImported }: Props) {
   const canContinue = Boolean(trimmedName) && !collidingPack && packs !== null && !packsLoading
 
   const filteredMemes = useMemo(() => {
+    // Premium Imgflip search: the server already returned only matches.
+    if (searchResults !== null) return searchResults
     if (!memes) return []
     const needle = query.trim().toLowerCase()
     if (!needle) return memes
@@ -545,15 +611,19 @@ export default function ImgflipPackCreator({ onClose, onImported }: Props) {
         meme.name.toLowerCase().includes(needle) ||
         meme.sourceId.toLowerCase().includes(needle),
     )
-  }, [memes, query])
+  }, [memes, query, searchResults])
 
   const allFilteredSelected =
     filteredMemes.length > 0 && filteredMemes.every((meme) => selected.has(meme.sourceId))
 
-  const chosenMemes = useMemo(
-    () => (memes ?? []).filter((meme) => selected.has(meme.sourceId)),
-    [memes, selected],
-  )
+  const chosenMemes = useMemo(() => {
+    // Selected search hits are not part of the top-100 catalog, so merge both
+    // pools (deduplicated) instead of filtering `memes` alone.
+    const pool = new Map<string, SourceItem>()
+    for (const meme of memes ?? []) pool.set(meme.sourceId, meme)
+    for (const meme of searchResults ?? []) pool.set(meme.sourceId, meme)
+    return [...pool.values()].filter((meme) => selected.has(meme.sourceId))
+  }, [memes, searchResults, selected])
 
   const requestClose = () => {
     if (runningRef.current) {
@@ -904,6 +974,21 @@ export default function ImgflipPackCreator({ onClose, onImported }: Props) {
                   ))}
                 </div>
                 <p className="mt-1 text-xs text-dim">{sourceInfo.hint}</p>
+                {source === 'imgflip' && (
+                  <p className="mt-1 text-xs">
+                    {premium ? (
+                      <span className="font-semibold text-mint">
+                        🔑 Premium search active — 2+ characters search the full Imgflip catalog.
+                      </span>
+                    ) : (
+                      <span className="text-dim">
+                        Full catalog search needs a server-side{' '}
+                        <code className="rounded bg-night2 px-1">IMGFLIP_API_KEY</code> (Imgflip
+                        subscription).
+                      </span>
+                    )}
+                  </p>
+                )}
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">
@@ -1003,7 +1088,11 @@ export default function ImgflipPackCreator({ onClose, onImported }: Props) {
                   <p className="mt-1 text-xs text-dim">
                     {memes === null
                       ? `Loading the ${sourceInfo.label} catalog…`
-                      : `${filteredMemes.length} of ${memes.length} shown · ${selected.size} selected`}
+                      : searchBusy
+                        ? 'Searching all of Imgflip…'
+                        : searchResults !== null
+                          ? `${searchResults.length} matches across Imgflip · ${selected.size} selected`
+                          : `${filteredMemes.length} of ${memes.length} shown · ${selected.size} selected`}
                   </p>
                   {fetchedLabel(fetchedAt) && (
                     <p className="text-xs text-dim">{fetchedLabel(fetchedAt)}</p>
@@ -1100,11 +1189,15 @@ export default function ImgflipPackCreator({ onClose, onImported }: Props) {
 
               {memes !== null && filteredMemes.length === 0 && (
                 <p className="py-8 text-center text-sm text-dim">
-                  {source === 'local' && memes.length === 0
-                    ? 'No images loaded yet. Choose some files above.'
-                    : memes.length === 0
-                      ? `No templates are available in ${sourceInfo.label} right now.`
-                      : 'No templates match your search.'}
+                  {searchBusy
+                    ? 'Searching all of Imgflip…'
+                    : searchError
+                      ? searchError
+                      : source === 'local' && memes.length === 0
+                        ? 'No images loaded yet. Choose some files above.'
+                        : memes.length === 0
+                          ? `No templates are available in ${sourceInfo.label} right now.`
+                          : 'No templates match your search.'}
                 </p>
               )}
 

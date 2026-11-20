@@ -16,6 +16,7 @@ export async function GET() {
           name: p.name,
           description: p.description,
           isPublic: p.isPublic,
+          adult: p.adult,
           templateCount: p.templates.filter((t) => t.isActive).length,
         }))
         .filter((p) => p.templateCount > 0),

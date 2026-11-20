@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Pack" ADD COLUMN IF NOT EXISTS "adult" BOOLEAN NOT NULL DEFAULT false;

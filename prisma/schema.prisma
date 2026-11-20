@@ -36,6 +36,8 @@ model Pack {
   description String?
   isPublic    Boolean    @default(true)
   isActive    Boolean    @default(true)
+  /** Pack contains adult (18+) templates; lobbies gate it behind a confirmation. */
+  adult       Boolean    @default(false)
   sortOrder   Int        @default(0)
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt

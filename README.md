@@ -24,6 +24,10 @@ meme-maker wins. No accounts, no filters, no mercy.
   (everyone captions the same template), Relaxed (no points, no winner) and Chaos
   (a random rule each round: double points, no downvotes, 40-character limit or a
   fast round).
+- **+18 packs with an age gate** — admins can mark any pack as adult. Lobbies that
+  use one ask every player once (host included); declining removes the player, and
+  the game cannot start until everyone has confirmed. The bundle itself contains
+  no adult templates.
 - **Guest play** — just pick a name and play, no sign-up.
 - **Custom memes** — admins can create packs and upload template images. Players
   edit every meme in a WYSIWYG editor: pre-placed text boxes are just starting
@@ -51,7 +55,9 @@ meme-maker wins. No accounts, no filters, no mercy.
   hundreds of templates.
 - **Meme pack creator** — pick templates from Imgflip, Memegen, Memegenscript,
   Memegen.rs or local images, select what you need and import them into a new
-  local pack with progress, dedupe and error reporting.
+  local pack with progress, dedupe and error reporting. With an optional
+  `IMGFLIP_API_KEY` (Imgflip subscription), the Imgflip tab searches the full
+  catalog instead of only the free top 100.
 - **Böse memes allowed** — there is intentionally no profanity filter and no
   auto-moderation. What you caption is what the room gets.
 - **Self-hosted & private** — Docker Compose or one all-in-one container with
@@ -223,6 +229,7 @@ All configuration is via environment variables (see `.env.example`):
 | `ADMIN_EMAIL`       | `admin@localhost` (Compose) | Admin login email, created on first boot. |
 | `ADMIN_PASSWORD`    | empty = generated        | Admin password. If set, it is applied on every boot. Empty: random one-time password printed on first boot. |
 | `COOKIE_SECURE`     | auto-detect              | Forces the admin session cookie's `Secure` flag (`true`/`false`). Unset: HTTPS detected via `X-Forwarded-Proto` or the request URL. |
+| `IMGFLIP_API_KEY`   | unset                    | Optional Imgflip API key (subscription). Enables full-catalog search in the admin pack creator; without it only the free top-100 catalog is available. |
 | `UPLOAD_DIR`        | `./data/uploads`         | Where uploaded template images are stored (Docker: `/data/uploads`). |
 | `SEED_ON_BOOT`      | `true`                   | Docker entrypoint only: set `false` to skip seeding at startup. |
 | `SEED_FORCE`        | unset                    | Set to `1` for a deliberate re-sync of the seeded Classic pack. |

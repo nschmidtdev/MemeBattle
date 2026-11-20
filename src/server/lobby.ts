@@ -33,7 +33,7 @@ import {
 import { normalizeMemePadding } from '../lib/meme'
 import { MEME_BUDDY_POINTS, computeBuddyOutcome, computeScore } from '../lib/scoring'
 import type { BuddyPickInput } from '../lib/scoring'
-import { loadTemplates } from './templates'
+import { loadAdultPackIds, loadTemplates } from './templates'
 
 export const MAX_PLAYERS = 30
 export const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
@@ -70,6 +70,8 @@ export interface PlayerState {
   submittedRounds: number
   totalScore: number
   roundScores: number[]
+  /** Confirmed the +18 prompt for this lobby; asked once per lobby session. */
+  ageVerified: boolean
 }
 
 export interface LobbyHooks {
@@ -169,6 +171,8 @@ export class Lobby {
   private timers: NodeJS.Timeout[] = []
   /** Guards start() against concurrent calls while templates are loading. */
   private starting = false
+  /** Selected packs that are marked adult (18+); a lobby gate applies while non-empty. */
+  private adultPackIds = new Set<string>()
 
   // game state
   totalRounds = 0
@@ -218,6 +222,7 @@ export class Lobby {
   }
 
   playerInfos(): PlayerInfo[] {
+    const adultActive = this.hasAdultPacks()
     return [...this.players.values()].map((p) => ({
       id: p.id,
       username: p.username,
@@ -225,6 +230,7 @@ export class Lobby {
       color: p.color,
       connected: p.connected,
       isHost: p.isHost,
+      adultOk: !adultActive || p.ageVerified,
     }))
   }
 
@@ -237,7 +243,68 @@ export class Lobby {
       phase: this.phase,
       players: this.playerInfos(),
       maxPlayers: MAX_PLAYERS,
+      adult: this.hasAdultPacks(),
     }
+  }
+
+  /** True when the current selection contains at least one adult (18+) pack. */
+  hasAdultPacks(): boolean {
+    return this.settings.packIds.some((id) => this.adultPackIds.has(id))
+  }
+
+  /**
+   * Look up which selected packs are adult. With `notify`, every connected player
+   * who has not confirmed yet is prompted and the lobby state is broadcast. Join
+   * and start call this without `notify`: the prompt is part of the resume payload.
+   */
+  async refreshAdultPacks(notify: boolean): Promise<void> {
+    const ids = this.settings.packIds
+    let next = new Set<string>()
+    try {
+      next = await loadAdultPackIds(ids)
+    } catch {
+      // A database hiccup must not break the lobby; keep the previous knowledge.
+      return
+    }
+    // Settings may have changed while the lookup was in flight.
+    if (ids.join('\u0000') !== this.settings.packIds.join('\u0000')) return
+    this.adultPackIds = next
+    if (notify) {
+      if (this.hasAdultPacks()) {
+        for (const p of this.players.values()) {
+          if (p.connected && !p.ageVerified && p.socketId) {
+            this.hooks.sendTo(p.socketId, Events.AdultPrompt, { lobbyName: this.name })
+          }
+        }
+      }
+      this.hooks.broadcast(Events.LobbyUpdate, this.fullLobbyUpdate())
+    }
+  }
+
+  private needsAdultConfirm(p: PlayerState): boolean {
+    return this.phase === 'lobby' && this.hasAdultPacks() && !p.ageVerified
+  }
+
+  /**
+   * The +18 answer: yes marks the player for this lobby, no removes them like a
+   * kick (the client shows an explanation and returns to the home page).
+   */
+  answerAdult(socketId: string, accepted: boolean): string | null {
+    const p = this.playerBySocket(socketId)
+    if (!p) return 'Unknown player.'
+    if (this.phase !== 'lobby') return 'The age confirmation is closed.'
+    // Nothing to confirm: leave the flag untouched. If the host enables adult
+    // packs later, this player must still see the prompt.
+    if (!this.hasAdultPacks()) return null
+    if (accepted) {
+      p.ageVerified = true
+      this.hooks.broadcast(Events.LobbyUpdate, this.fullLobbyUpdate())
+      return null
+    }
+    const socketIdOfPlayer = p.socketId
+    this.removePlayer(p.id)
+    if (socketIdOfPlayer) this.hooks.sendTo(socketIdOfPlayer, Events.AdultDeclined, {})
+    return null
   }
 
   addPlayerPublic(username: string, socketId: string): PlayerState {
@@ -310,6 +377,7 @@ export class Lobby {
       submittedRounds: 0,
       totalScore: 0,
       roundScores: [],
+      ageVerified: false,
     }
     this.players.set(p.id, p)
     return p
@@ -420,9 +488,15 @@ export class Lobby {
     if ('lobbyName' in input && !collapseLobbyName(input.lobbyName)) {
       merged.lobbyName = this.settings.lobbyName
     }
+    const previousPackIds = this.settings.packIds.join('\u0000')
     this.settings = normalizeSettings(merged)
     this.name = this.settings.lobbyName
     this.hooks.broadcast(Events.LobbyUpdate, this.fullLobbyUpdate())
+    // Pack selection can introduce (or drop) adult packs: refresh the gate and
+    // prompt everyone who has not confirmed yet. Fire-and-forget by design.
+    if (this.settings.packIds.join('\u0000') !== previousPackIds) {
+      void this.refreshAdultPacks(true)
+    }
     return null
   }
 
@@ -438,6 +512,16 @@ export class Lobby {
 
     this.starting = true
     try {
+      // The gate needs current pack flags even when nobody touched the settings
+      // since the lobby was created.
+      await this.refreshAdultPacks(false)
+      if (this.hasAdultPacks()) {
+        const connected = [...this.players.values()].filter((pl) => pl.connected)
+        const confirmed = connected.filter((pl) => pl.ageVerified).length
+        if (confirmed < connected.length) {
+          return `Waiting for +18 confirmations (${confirmed}/${connected.length}).`
+        }
+      }
       const templates = await loadTemplates(this.settings.packIds)
       // Loading is async: only continue if the lobby is still waiting and the caller
       // is still a connected host (by player id, so a nav rebind does not cancel it).
@@ -973,6 +1057,10 @@ export class Lobby {
   private sendResume(socketId: string, playerId: string): string | null {
     const send = (event: string, payload: unknown) => this.hooks.sendTo(socketId, event, payload)
     send(Events.LobbyUpdate, this.fullLobbyUpdate())
+    const resuming = this.players.get(playerId)
+    if (resuming && this.needsAdultConfirm(resuming)) {
+      send(Events.AdultPrompt, { lobbyName: this.name })
+    }
     if (this.phase === 'caption') {
       const pl = this.players.get(playerId)
       const template = pl?.template ?? null
@@ -1033,6 +1121,7 @@ export class Lobby {
       players: connected,
       maxPlayers: MAX_PLAYERS,
       inGame,
+      adult: this.hasAdultPacks(),
     }
   }
 

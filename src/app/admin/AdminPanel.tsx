@@ -12,6 +12,7 @@ interface AdminPack {
   description: string | null
   isPublic: boolean
   isActive: boolean
+  adult: boolean
   sortOrder: number
   templateCount: number
   activeTemplateCount: number
@@ -28,6 +29,7 @@ interface PackFormValues {
   description: string
   isPublic: boolean
   isActive: boolean
+  adult: boolean
 }
 
 type TemplateAction = 'toggle' | 'delete'
@@ -285,6 +287,7 @@ export default function AdminPanel({ email }: Props) {
           description,
           isPublic: values.isPublic,
           isActive: values.isActive,
+          adult: values.adult,
         }),
       })
     } else {
@@ -295,6 +298,7 @@ export default function AdminPanel({ email }: Props) {
           name: values.name.trim(),
           description,
           isPublic: values.isPublic,
+          adult: values.adult,
         }),
       })
       if (typeof data?.pack?.id === 'string') createdId = data.pack.id
@@ -484,6 +488,11 @@ export default function AdminPanel({ email }: Props) {
                       <span className={`badge px-1.5 py-0 text-[10px] ${p.isActive ? 'live' : ''}`}>
                         {p.isActive ? 'active' : 'off'}
                       </span>
+                      {p.adult && (
+                        <span className="badge px-1.5 py-0 text-[10px] text-rose" title="Adult (18+) pack">
+                          +18
+                        </span>
+                      )}
                       <span className="badge px-1.5 py-0 text-[10px]">
                         {p.templateCount} {p.templateCount === 1 ? 'template' : 'templates'}
                       </span>
@@ -520,6 +529,11 @@ export default function AdminPanel({ email }: Props) {
                       <span className={`badge ${selectedPack.isActive ? 'live' : ''}`}>
                         {selectedPack.isActive ? 'active' : 'off'}
                       </span>
+                      {selectedPack.adult && (
+                        <span className="badge text-rose" title="Adult (18+) pack">
+                          +18
+                        </span>
+                      )}
                     </>
                   ) : (
                     <span className="badge">{packs.length} packs</span>
@@ -799,6 +813,7 @@ function PackModal({
   const [description, setDescription] = useState(pack?.description ?? '')
   const [isPublic, setIsPublic] = useState(pack?.isPublic ?? true)
   const [isActive, setIsActive] = useState(pack?.isActive ?? true)
+  const [adult, setAdult] = useState(pack?.adult ?? false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -809,7 +824,7 @@ function PackModal({
     setBusy(true)
     setError(null)
     try {
-      await onSubmit({ name, description, isPublic, isActive })
+      await onSubmit({ name, description, isPublic, isActive, adult })
       onClose()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Save failed')
@@ -898,6 +913,17 @@ function PackModal({
                 </label>
               )}
               {!pack && <p className="mt-1 text-[11px] text-dim">New packs start active.</p>}
+            </div>
+            <div className="rounded-xl border border-rose/40 bg-rose/5 px-3 py-2.5">
+              <label className="checkbox-row">
+                <input type="checkbox" checked={adult} onChange={(e) => setAdult(e.target.checked)} />
+                <span className="font-semibold text-rose">+18 / adult content</span>
+              </label>
+              <p className="ml-6 mt-0.5 text-[11px] leading-snug text-dim">
+                Marks the pack as 18+. Every player must confirm their age when a lobby uses
+                it — and is removed if they decline. Keep the content yourself: the bundle
+                ships no adult templates.
+              </p>
             </div>
           </div>
         </form>

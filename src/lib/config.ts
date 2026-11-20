@@ -49,6 +49,8 @@ export const config = {
   corsOrigins: cors.origins,
   /** True when CORS_ORIGIN contains "*" (allow every origin). */
   corsAllowAll: cors.allowAll,
+  /** Optional Imgflip API key (premium): enables search over the full catalog. Never logged. */
+  imgflipApiKey: process.env.IMGFLIP_API_KEY?.trim() || null,
 }
 
 // Make sure the upload dir exists (server + route handlers both use it).

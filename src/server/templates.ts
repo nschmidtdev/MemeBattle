@@ -3,6 +3,19 @@ import type { TemplateData } from '../lib/types'
 import { filterValidTemplateBoxes } from '../lib/templateValidation'
 
 /**
+ * Which of the given packs are marked adult (18+). Only active, public packs
+ * count: hidden packs cannot be played and therefore must not gate a lobby.
+ */
+export async function loadAdultPackIds(packIds: string[]): Promise<Set<string>> {
+  if (packIds.length === 0) return new Set()
+  const rows = await prisma.pack.findMany({
+    where: { id: { in: packIds }, isActive: true, isPublic: true, adult: true },
+    select: { id: true },
+  })
+  return new Set(rows.map((row) => row.id))
+}
+
+/**
  * Load all active templates of the given packs (for dealing in a round).
  * Only active, public packs are playable: a hidden/disabled pack id supplied by
  * a client must never leak templates into a game.

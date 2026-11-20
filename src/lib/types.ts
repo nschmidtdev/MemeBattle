@@ -134,6 +134,8 @@ export interface PlayerInfo {
   color: string
   connected: boolean
   isHost: boolean
+  /** Confirmed the +18 prompt for this lobby (always true when no adult packs are active). */
+  adultOk: boolean
 }
 
 export interface MemeEntry {
@@ -249,6 +251,8 @@ export interface PackOption {
   name: string
   description: string | null
   templateCount: number
+  /** Contains adult (18+) templates; lobbies ask every player to confirm. */
+  adult: boolean
 }
 
 export type Phase = 'lobby' | 'caption' | 'voting' | 'roundResults' | 'gameOver'
@@ -270,6 +274,7 @@ export const Events = {
   PublicList: 'public:list',
   PlayAgain: 'game:play-again',
   Kick: 'lobby:kick',
+  AdultAnswer: 'adult:answer',
 
   // server -> client
   LobbyUpdate: 'lobby:update',
@@ -277,6 +282,8 @@ export const Events = {
   LobbyEmpty: 'lobby:empty',
   PublicLobbies: 'public:lobbies',
   PlayerKick: 'player:kick',
+  AdultPrompt: 'adult:prompt',
+  AdultDeclined: 'adult:declined',
   CaptionTemplate: 'caption:template',
   PhaseCaption: 'phase:caption',
   PhaseVoting: 'phase:voting',

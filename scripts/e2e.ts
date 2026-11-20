@@ -34,6 +34,7 @@ const sockets = new Set<Socket>()
 /** Admin session used for the test pack; stays valid so cleanup can delete it. */
 let adminCookie = ''
 let testPackId = ''
+let adultPackId = ''
 
 function http(pathOrUrl: string, init: RequestInit = {}): Promise<Response> {
   const url = /^https?:\/\//i.test(pathOrUrl) ? pathOrUrl : `${BASE}${pathOrUrl}`
@@ -171,6 +172,16 @@ async function cleanup() {
       console.log(`  cleanup: delete test pack failed: ${(e as Error).message}`)
     }
   }
+  if (adultPackId && adminCookie) {
+    const id = adultPackId
+    adultPackId = ''
+    try {
+      const res = await http(`/api/packs/${id}`, { method: 'DELETE', headers: { Cookie: adminCookie } })
+      if (res.status >= 300) console.log(`  cleanup: delete adult pack returned ${res.status}`)
+    } catch (e) {
+      console.log(`  cleanup: delete adult pack failed: ${(e as Error).message}`)
+    }
+  }
 }
 
 async function runSuite() {
@@ -250,6 +261,32 @@ async function runSuite() {
   })
   if (!pack?.id) throw new Error('Could not create the E2E test pack')
   testPackId = pack.id
+
+  // Adult pack: one template so the lobby can actually start after the gate.
+  const adultRes = await http('/api/packs', {
+    method: 'POST',
+    headers: adminHeaders(),
+    body: JSON.stringify({ name: `E2E Adult ${RUN_TAG}`, isPublic: true, adult: true }),
+  })
+  const adultBody = await readJson(adultRes)
+  const adultPack: any = adultBody?.pack
+  ok(
+    'create adult test pack -> 201 with adult flag',
+    adultRes.status === 201 && adultPack?.adult === true,
+    { status: adultRes.status, body: adultBody },
+  )
+  if (!adultPack?.id) throw new Error('Could not create the E2E adult pack')
+  adultPackId = adultPack.id
+  const adultTemplateRes = await http('/api/templates', {
+    method: 'POST',
+    headers: adminHeaders(),
+    body: JSON.stringify({
+      packId: adultPack.id,
+      name: `E2E Adult Template ${RUN_TAG}`,
+      imageKey: 'public:seed/drake.svg',
+    }),
+  })
+  ok('create adult test template -> 201', adultTemplateRes.status === 201, adultTemplateRes.status)
 
   // Three templates: enough to prove reroll really changes the image, and
   // independent of the seeded "Classic" pack (which may be edited/deleted).
@@ -911,6 +948,128 @@ async function runSuite() {
     )
     H.disconnect()
     G.disconnect()
+  }
+
+  // ------------------------------------------------------------- +18 gate
+  console.log('\n+18 gate:')
+  {
+    const H = await openSocket()
+    const hostStates: any[] = []
+    H.on('lobby:update', (state: any) => hostStates.push(state))
+    const hPromptP = waitEvent<any>(H, 'adult:prompt', 10000)
+    const hJoined = waitEvent<any>(H, 'lobby:joined', 10000)
+    H.emit('lobby:join', {
+      username: 'AdultHost',
+      create: true,
+      isPublic: true,
+      lobbyName: 'Adult Gate',
+      settings: {
+        mode: 'normal',
+        rounds: 1,
+        rerolls: 0,
+        captionTime: 15,
+        voteTime: 5,
+        packIds: [adultPackId],
+      },
+    })
+    const h: { code: string } = await hJoined
+    await hPromptP
+    ok('adult lobby: creator is prompted', true)
+
+    H.emit('adult:answer', { accepted: true })
+    await until(
+      () => latest(hostStates)?.players?.find((p: any) => p.isHost)?.adultOk === true,
+      5000,
+      'host confirmation',
+    )
+    ok('adult lobby: host confirmation is recorded', true)
+
+    // A player who declines is removed immediately.
+    const G1 = await openSocket()
+    const g1PromptP = waitEvent<any>(G1, 'adult:prompt', 10000)
+    const g1Joined = waitEvent<any>(G1, 'lobby:joined', 10000)
+    G1.emit('lobby:join', { username: 'DeclineGuest', code: h.code })
+    await g1Joined
+    await g1PromptP
+    ok('adult lobby: joining player is prompted', true)
+    const g1DeclinedP = waitEvent<any>(G1, 'adult:declined', 10000)
+    G1.emit('adult:answer', { accepted: false })
+    await g1DeclinedP
+    await until(() => latest(hostStates)?.players?.length === 1, 5000, 'decline removal')
+    ok('adult lobby: declining removes the player', true)
+
+    // A second guest joins but does not answer: the start stays blocked.
+    const G2 = await openSocket()
+    const g2PromptP = waitEvent<any>(G2, 'adult:prompt', 10000)
+    const g2Joined = waitEvent<any>(G2, 'lobby:joined', 10000)
+    G2.emit('lobby:join', { username: 'ConfirmGuest', code: h.code })
+    await g2Joined
+    await g2PromptP
+    await until(() => latest(hostStates)?.players?.length === 2, 5000, 'guest join')
+
+    const blockedP = waitEvent<any>(H, 'client:error', 10000)
+    H.emit('lobby:start')
+    const blocked = await blockedP
+    ok(
+      'adult lobby: start blocked until everyone confirms',
+      /\+18 confirmations/i.test(blocked.message),
+      blocked,
+    )
+
+    G2.emit('adult:answer', { accepted: true })
+    await until(
+      () => latest(hostStates)?.players?.every((p: any) => p.adultOk) === true,
+      5000,
+      'all confirmations',
+    )
+    const captionP = waitEvent<any>(H, 'phase:caption', 15000)
+    const startErrP = waitEvent<any>(H, 'client:error', 15000)
+    H.emit('lobby:start')
+    const adultRound = await Promise.race([captionP, startErrP])
+    ok(
+      'adult lobby: starts once everyone confirmed',
+      adultRound?.round === 1,
+      adultRound,
+    )
+
+    // The public lobby list marks adult lobbies.
+    const P = await openSocket()
+    const listP = waitEvent<any>(P, 'public:lobbies', 5000)
+    P.emit('public:list')
+    const list = await listP
+    const entry = (list.lobbies ?? []).find((l: any) => l.code === h.code)
+    ok('adult lobby: public list marks it +18', entry?.adult === true, entry)
+
+    G1.disconnect()
+    G2.disconnect()
+    H.disconnect()
+    P.disconnect()
+  }
+
+  // ------------------------------------------------------------- Imgflip premium
+  console.log('\nImgflip meme source:')
+  {
+    const configured = Boolean(process.env.IMGFLIP_API_KEY?.trim())
+    const listRes = await http('/api/admin/meme-sources/imgflip', {
+      headers: { Cookie: adminCookie },
+    })
+    const listBody = await readJson(listRes)
+    ok(
+      'imgflip catalog reports the premium status',
+      listRes.status === 200 && listBody?.premium === configured,
+      { status: listRes.status, premium: listBody?.premium, configured },
+    )
+    if (!configured) {
+      const searchRes = await http('/api/admin/meme-sources/imgflip?q=cat', {
+        headers: { Cookie: adminCookie },
+      })
+      const searchBody = await readJson(searchRes)
+      ok(
+        'imgflip search without a key returns a clear error',
+        searchRes.status === 502 && /IMGFLIP_API_KEY/.test(searchBody?.error ?? ''),
+        { status: searchRes.status, body: searchBody },
+      )
+    }
   }
 
   // ------------------------------------------------------------- host handover & same-name rejoin

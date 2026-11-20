@@ -98,19 +98,29 @@ export default function LobbyView({ state, myId, onSettings, onStart, onKick, er
   }
 
   const connectedCount = state.players.filter((p) => p.connected).length
+  const pendingAdult = state.adult
+    ? state.players.filter((p) => p.connected && !p.adultOk).length
+    : 0
   const allPacksSelected =
     (packs?.length ?? 0) > 0 && (packs ?? []).every((p) => state.settings.packIds.includes(p.id))
   const toggleAllPacks = () => {
     if (!isHost) return
     onSettings({ packIds: allPacksSelected ? [] : (packs ?? []).map((p) => p.id) })
   }
-  const canStart = isHost && connectedCount >= 2 && state.settings.packIds.length > 0 && !startPending
+  const canStart =
+    isHost &&
+    connectedCount >= 2 &&
+    state.settings.packIds.length > 0 &&
+    pendingAdult === 0 &&
+    !startPending
   const startHint =
     connectedCount < 2
       ? `Waiting for connected players (${connectedCount}/2 minimum)…`
       : state.settings.packIds.length === 0
         ? 'Pick at least one template pack…'
-        : null
+        : pendingAdult > 0
+          ? `Waiting for +18 confirmations (${connectedCount - pendingAdult}/${connectedCount})…`
+          : null
 
   const start = () => {
     if (!canStart) return
@@ -149,6 +159,11 @@ export default function LobbyView({ state, myId, onSettings, onStart, onKick, er
                   {p.username}
                 </span>
                 {p.id === myId && <span className="block text-[10px] uppercase tracking-wider text-punch">you</span>}
+                {state.adult && p.connected && !p.adultOk && (
+                  <span className="block text-[10px] font-bold uppercase tracking-wider text-rose">
+                    +18 pending
+                  </span>
+                )}
               </span>
               {p.isHost && <span title="Host" className="text-lg">👑</span>}
               {isHost && p.id !== myId && (
@@ -242,13 +257,23 @@ export default function LobbyView({ state, myId, onSettings, onStart, onKick, er
               <span className="block text-xs font-semibold uppercase tracking-wider text-dim">
                 Template packs <span className="text-sun">{state.settings.packIds.length} selected</span>
               </span>
-              <button
-                className="text-xs text-dim underline hover:text-ink disabled:opacity-40"
-                disabled={!isHost || !packs || packs.length === 0}
-                onClick={toggleAllPacks}
-              >
-                {allPacksSelected ? 'clear all' : 'select all'}
-              </button>
+              <span className="flex items-center gap-2">
+                {state.adult && (
+                  <span
+                    className="rounded-full border border-rose/60 bg-rose/10 px-2 py-0.5 text-[10px] font-bold text-rose"
+                    title="Adult (18+) packs selected: every player must confirm"
+                  >
+                    +18
+                  </span>
+                )}
+                <button
+                  className="text-xs text-dim underline hover:text-ink disabled:opacity-40"
+                  disabled={!isHost || !packs || packs.length === 0}
+                  onClick={toggleAllPacks}
+                >
+                  {allPacksSelected ? 'clear all' : 'select all'}
+                </button>
+              </span>
             </div>
             <div className="flex flex-wrap gap-2">
               {packs === null && !packsError && (
@@ -276,6 +301,11 @@ export default function LobbyView({ state, myId, onSettings, onStart, onKick, er
                   >
                     {on ? '✓ ' : ''}{p.name}
                     <span className="ml-1 text-xs opacity-60">{p.templateCount}</span>
+                    {p.adult && (
+                      <span className="ml-1.5 rounded-full bg-rose/20 px-1.5 py-0 text-[10px] font-bold text-rose">
+                        +18
+                      </span>
+                    )}
                   </button>
                 )
               })}

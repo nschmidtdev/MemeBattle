@@ -38,6 +38,9 @@ services:
       COOKIE_SECURE: ${COOKIE_SECURE:-}
       # Comma-separated allowed Socket.io origins; empty = same-origin only.
       CORS_ORIGIN: ${CORS_ORIGIN:-}
+      # Optional Imgflip API key (premium): enables full-catalog search in the
+      # admin pack creator. Empty = free top-100 catalog only.
+      IMGFLIP_API_KEY: ${IMGFLIP_API_KEY:-}
       SEED_ON_BOOT: ${SEED_ON_BOOT:-true}
     healthcheck:
       # No curl/wget in the slim image; Node 24 ships fetch.

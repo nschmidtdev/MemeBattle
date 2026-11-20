@@ -57,6 +57,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   }
   if (typeof body.isPublic === 'boolean') data.isPublic = body.isPublic
   if (typeof body.isActive === 'boolean') data.isActive = body.isActive
+  if (typeof body.adult === 'boolean') data.adult = body.adult
   if (body.sortOrder !== undefined) {
     if (!isInt32(body.sortOrder)) {
       return NextResponse.json({ error: 'sortOrder must be a 32-bit integer' }, { status: 400 })
@@ -78,6 +79,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         description: pack.description,
         isPublic: pack.isPublic,
         isActive: pack.isActive,
+        adult: pack.adult,
         sortOrder: pack.sortOrder,
       },
     })

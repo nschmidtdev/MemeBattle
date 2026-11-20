@@ -131,6 +131,7 @@ export function initSockets(io: Server): () => void {
         const existing = socket.data.mb as BoundSocket | undefined
         if (existing && code && existing.lobby.code === code) {
           socket.emit(Events.LobbyJoined, { code: existing.lobby.code, playerId: existing.playerId })
+          await existing.lobby.refreshAdultPacks(false)
           existing.lobby.resume(socket.id, existing.playerId)
           return
         }
@@ -143,6 +144,8 @@ export function initSockets(io: Server): () => void {
             emitError(socket, `Lobby ${code} not found.`)
             return
           }
+          // The +18 gate must be known before the resume payload goes out.
+          await lobby.refreshAdultPacks(false)
           const res = lobby.join(socket.id, playerId, username)
           if (res.error || !res.player) {
             emitError(socket, res.error ?? 'Could not join lobby.')
@@ -161,6 +164,7 @@ export function initSockets(io: Server): () => void {
             username,
           )
           if (!created) return
+          await created.lobby.refreshAdultPacks(false)
           bind(socket, created.lobby, created.player.id)
           socket.emit(Events.LobbyJoined, { code: created.lobby.code, playerId: created.player.id })
           created.lobby.resume(socket.id, created.player.id)
@@ -171,6 +175,7 @@ export function initSockets(io: Server): () => void {
           )
           let player: ReturnType<Lobby['addPlayerPublic']> | undefined
           if (target) {
+            await target.refreshAdultPacks(false)
             const res = target.join(socket.id, playerId, username)
             if (res.error || !res.player) {
               target = undefined
@@ -184,6 +189,7 @@ export function initSockets(io: Server): () => void {
             if (!created) return
             target = created.lobby
             player = created.player
+            await target.refreshAdultPacks(false)
           }
           if (!player) return
           bind(socket, target, player.id)
@@ -292,6 +298,25 @@ export function initSockets(io: Server): () => void {
             ts.leave(b.lobby.code)
             delete ts.data.mb
           }
+        }
+      }),
+    )
+
+    socket.on(
+      Events.AdultAnswer,
+      guard(socket, Events.AdultAnswer, (data: Record<string, unknown>) => {
+        const b = socket.data.mb as BoundSocket | undefined
+        if (!b) return
+        const accepted = data?.accepted === true
+        const err = b.lobby.answerAdult(socket.id, accepted)
+        if (err) {
+          emitError(socket, err)
+          return
+        }
+        if (!accepted) {
+          // The player was removed by the answer; detach this socket like a kick.
+          socket.leave(b.lobby.code)
+          delete socket.data.mb
         }
       }),
     )

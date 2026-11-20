@@ -69,6 +69,8 @@ export interface LobbyState {
   phase: Phase
   players: PlayerInfo[]
   maxPlayers: number
+  /** At least one selected pack is marked adult (18+). */
+  adult: boolean
 }
 
 export interface PublicLobbyInfo {
@@ -77,4 +79,5 @@ export interface PublicLobbyInfo {
   players: number
   maxPlayers: number
   inGame: boolean
+  adult: boolean
 }

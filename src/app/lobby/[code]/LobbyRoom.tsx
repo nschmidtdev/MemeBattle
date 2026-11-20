@@ -29,6 +29,7 @@ import LobbyView from './views/LobbyView'
 import CaptionView from './views/CaptionView'
 import VotingView from './views/VotingView'
 import ResultsView from './views/ResultsView'
+import AdultGateModal from './views/AdultGateModal'
 
 interface CaptionState {
   template: TemplateData | null
@@ -97,6 +98,7 @@ export default function LobbyRoom({ code }: { code: string }) {
   const [voting, setVoting] = useState<VotingState | null>(null)
   const [roundResult, setRoundResult] = useState<RoundResult | null>(null)
   const [gameOver, setGameOver] = useState<GameOverPayload | null>(null)
+  const [adultPrompt, setAdultPrompt] = useState(false)
 
   const [nameInput, setNameInput] = useState<string | null>(null)
 
@@ -164,6 +166,14 @@ export default function LobbyRoom({ code }: { code: string }) {
         setMyId(null)
         router.replace('/')
       }
+    }
+    const onAdultPrompt = () => setAdultPrompt(true)
+    const onAdultDeclined = () => {
+      setAdultPrompt(false)
+      clearIdentity()
+      myIdRef.current = null
+      setMyId(null)
+      router.replace('/?adult=declined')
     }
     const startTimer = (seconds: number) => {
       endsAtRef.current = Date.now() + Math.max(0, seconds) * 1000
@@ -347,6 +357,8 @@ export default function LobbyRoom({ code }: { code: string }) {
     socket.on(Events.LobbyUpdate, onState)
     socket.on(Events.LobbyEmpty, onEmpty)
     socket.on(Events.PlayerKick, onKick)
+    socket.on(Events.AdultPrompt, onAdultPrompt)
+    socket.on(Events.AdultDeclined, onAdultDeclined)
     socket.on(Events.PhaseCaption, onPhaseCaption)
     socket.on(Events.CaptionTemplate, onCaptionTemplate)
     socket.on(Events.PhaseVoting, onPhaseVoting)
@@ -380,6 +392,8 @@ export default function LobbyRoom({ code }: { code: string }) {
       socket.off(Events.LobbyUpdate, onState)
       socket.off(Events.LobbyEmpty, onEmpty)
       socket.off(Events.PlayerKick, onKick)
+      socket.off(Events.AdultPrompt, onAdultPrompt)
+      socket.off(Events.AdultDeclined, onAdultDeclined)
       socket.off(Events.PhaseCaption, onPhaseCaption)
       socket.off(Events.CaptionTemplate, onCaptionTemplate)
       socket.off(Events.PhaseVoting, onPhaseVoting)
@@ -744,6 +758,20 @@ export default function LobbyRoom({ code }: { code: string }) {
           <p className="animate-pulse">Waiting…</p>
         </section>
       )}
+
+      <AdultGateModal
+        open={adultPrompt}
+        onAnswer={(accepted) => {
+          setAdultPrompt(false)
+          socketRef.current?.emit(Events.AdultAnswer, { accepted })
+          if (!accepted) {
+            clearIdentity()
+            myIdRef.current = null
+            setMyId(null)
+            router.replace('/?adult=declined')
+          }
+        }}
+      />
     </div>
   )
 }

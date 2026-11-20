@@ -45,6 +45,7 @@ export async function GET(req: Request) {
         description: p.description,
         isPublic: p.isPublic,
         isActive: p.isActive,
+        adult: p.adult,
         sortOrder: p.sortOrder,
         templateCount: p.templates.length,
         activeTemplateCount: p.templates.filter((t) => t.isActive).length,
@@ -69,6 +70,7 @@ export async function POST(req: Request) {
   const description =
     typeof parsed.description === 'string' && parsed.description.trim() ? parsed.description.trim() : null
   const isPublic = typeof parsed.isPublic === 'boolean' ? parsed.isPublic : true
+  const adult = parsed.adult === true
   if (parsed.sortOrder !== undefined && !isInt32(parsed.sortOrder)) {
     return NextResponse.json({ error: 'sortOrder must be a 32-bit integer' }, { status: 400 })
   }
@@ -79,6 +81,7 @@ export async function POST(req: Request) {
         name,
         description,
         isPublic,
+        adult,
         ...(parsed.sortOrder !== undefined ? { sortOrder: parsed.sortOrder as number } : {}),
       },
     })
@@ -90,6 +93,7 @@ export async function POST(req: Request) {
           description: pack.description,
           isPublic: pack.isPublic,
           isActive: pack.isActive,
+          adult: pack.adult,
           sortOrder: pack.sortOrder,
         },
       },

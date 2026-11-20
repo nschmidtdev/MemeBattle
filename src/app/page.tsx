@@ -31,6 +31,7 @@ export default function StartPage() {
 
   const [username, setUsername] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const [lobbies, setLobbies] = useState<PublicLobbyInfo[]>([])
   const [packs, setPacks] = useState<PackOption[] | null>(null)
   const [packsError, setPacksError] = useState<string | null>(null)
@@ -54,6 +55,12 @@ export default function StartPage() {
 
   useEffect(() => {
     setUsername(getSavedUsername() ?? '')
+    // The lobby sends players here with ?adult=declined after a "No" answer.
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('adult') === 'declined') {
+      setNotice('You left the +18 lobby because you did not confirm the age question.')
+      window.history.replaceState(null, '', window.location.pathname)
+    }
   }, [])
 
   const loadPacks = useCallback(() => {
@@ -209,6 +216,13 @@ export default function StartPage() {
         </p>
       </header>
 
+      {notice && (
+        <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-sun/50 bg-sun/10 px-4 py-2.5 text-sm text-sun">
+          <span>{notice}</span>
+          <button className="font-bold" onClick={() => setNotice(null)}>✕</button>
+        </div>
+      )}
+
       {error && (
         <div className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-rose/50 bg-rose/10 px-4 py-2.5 text-sm text-rose">
           <span>{error}</span>
@@ -360,6 +374,11 @@ export default function StartPage() {
                       onClick={() => togglePack(p.id)}
                     >
                       {on ? '✓ ' : ''}{p.name} <span className="text-xs opacity-60">{p.templateCount}</span>
+                      {p.adult && (
+                        <span className="ml-1.5 rounded-full bg-rose/20 px-1.5 py-0 text-[10px] font-bold text-rose">
+                          +18
+                        </span>
+                      )}
                     </button>
                   )
                 })}
@@ -396,6 +415,14 @@ export default function StartPage() {
                 <span className="block truncate font-bold">{l.name}</span>
                 <span className="font-mono text-xs tracking-[0.2em] text-dim">{l.code}</span>
               </span>
+              {l.adult && (
+                <span
+                  className="rounded-full border border-rose/60 bg-rose/10 px-2 py-0.5 text-[10px] font-bold text-rose"
+                  title="Adult (18+) packs — players must confirm their age"
+                >
+                  +18
+                </span>
+              )}
               {l.inGame ? (
                 <span className="rounded-full border border-sun/50 bg-sun/10 px-2.5 py-0.5 text-xs font-semibold text-sun">in game</span>
               ) : (

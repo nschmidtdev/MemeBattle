@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getSessionUserFromCookies } from '@/lib/auth'
+import { ImgflipAuthError, isImgflipPremiumConfigured, searchImgflipTemplates } from '@/lib/imgflip'
 import {
   normalizeImgflip,
   normalizeMemegen,
@@ -9,6 +10,9 @@ import {
 } from '@/lib/memeSources'
 
 const CACHE_TTL_MS = 10 * 60 * 1000
+/** Search results change slowly and each miss costs a premium API call. */
+const SEARCH_CACHE_TTL_MS = 5 * 60 * 1000
+const SEARCH_CACHE_MAX = 50
 const FETCH_TIMEOUT_MS = 15_000
 
 interface SourceConfig {
@@ -45,9 +49,16 @@ interface CachedCatalog {
   fetchedAt: number
 }
 
+interface CachedSearch {
+  memes: SourceItem[]
+  fetchedAt: number
+}
+
 // One cache per source, collapsed concurrent misses, single server process.
 const caches = new Map<string, CachedCatalog>()
 const pending = new Map<string, Promise<CachedCatalog>>()
+const searchCaches = new Map<string, CachedSearch>()
+const searchPending = new Map<string, Promise<CachedSearch>>()
 
 async function fetchCatalog(source: string, config: SourceConfig): Promise<CachedCatalog> {
   const response = await fetch(config.url, {
@@ -81,11 +92,40 @@ function loadCatalog(source: string, config: SourceConfig): Promise<CachedCatalo
 }
 
 /**
+ * Premium catalog search with a small bounded cache. A miss only costs one
+ * upstream call; the cache keeps repeated searches and debounce retries cheap.
+ */
+function searchCatalog(query: string): Promise<CachedSearch> {
+  const key = query.trim().toLowerCase()
+  const cached = searchCaches.get(key)
+  if (cached && Date.now() - cached.fetchedAt < SEARCH_CACHE_TTL_MS) return Promise.resolve(cached)
+
+  const inFlight = searchPending.get(key)
+  if (inFlight) return inFlight
+
+  const request = searchImgflipTemplates(key)
+    .then((memes) => {
+      const entry: CachedSearch = { memes, fetchedAt: Date.now() }
+      searchCaches.set(key, entry)
+      while (searchCaches.size > SEARCH_CACHE_MAX) {
+        const oldest = searchCaches.keys().next().value
+        if (oldest === undefined) break
+        searchCaches.delete(oldest)
+      }
+      return entry
+    })
+    .finally(() => searchPending.delete(key))
+  searchPending.set(key, request)
+  return request
+}
+
+/**
  * Admin-only catalog endpoint for the pack creator.
  * Sources: imgflip, memegen, memegenscript, memegenrs.
+ * `?q=` on imgflip triggers the premium full-catalog search (IMGFLIP_API_KEY).
  */
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ source: string }> },
 ) {
   const user = await getSessionUserFromCookies()
@@ -95,6 +135,43 @@ export async function GET(
   const config = SOURCES[source]
   if (!config) return NextResponse.json({ error: 'Unknown meme source' }, { status: 404 })
 
+  const premium = source === 'imgflip' ? isImgflipPremiumConfigured() : undefined
+  const query = new URL(request.url).searchParams.get('q')?.trim() ?? ''
+
+  if (source === 'imgflip' && query) {
+    try {
+      const entry = await searchCatalog(query)
+      return NextResponse.json(
+        {
+          source,
+          label: config.label,
+          memes: entry.memes,
+          fetchedAt: new Date(entry.fetchedAt).toISOString(),
+          premium: true,
+          query,
+        },
+        { headers: { 'Cache-Control': 'private, no-store' } },
+      )
+    } catch (error) {
+      if (error instanceof ImgflipAuthError) {
+        console.error('Imgflip premium search rejected:', error.message)
+        return NextResponse.json(
+          {
+            error: premium
+              ? 'Imgflip rejected the API key — check IMGFLIP_API_KEY.'
+              : 'Imgflip premium search is not configured. Set IMGFLIP_API_KEY on the server.',
+          },
+          { status: 502 },
+        )
+      }
+      console.error(
+        'Imgflip premium search failed:',
+        error instanceof Error ? error.message : 'unknown error',
+      )
+      return NextResponse.json({ error: 'Failed to search Imgflip templates' }, { status: 502 })
+    }
+  }
+
   try {
     const entry = await loadCatalog(source, config)
     return NextResponse.json(
@@ -103,6 +180,7 @@ export async function GET(
         label: config.label,
         memes: entry.memes,
         fetchedAt: new Date(entry.fetchedAt).toISOString(),
+        ...(premium !== undefined ? { premium } : {}),
       },
       { headers: { 'Cache-Control': 'private, no-store' } },
     )
