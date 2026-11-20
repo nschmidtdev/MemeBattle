@@ -25,7 +25,7 @@ jobs:
       # client and `next build` validate that DATABASE_URL is set.
       DATABASE_URL: postgresql://meme:ci-only-password@localhost:5432/meme_battle?schema=public
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
@@ -76,7 +76,7 @@ jobs:
           --health-timeout 5s
           --health-retries 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
