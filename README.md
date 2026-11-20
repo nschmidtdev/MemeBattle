@@ -1,6 +1,7 @@
 # Meme Battle
 
 [![CI](https://github.com/nschmidtdev/MemeBattle/actions/workflows/ci.yml/badge.svg)](https://github.com/nschmidtdev/MemeBattle/actions/workflows/ci.yml)
+[![Docker image](https://github.com/nschmidtdev/MemeBattle/actions/workflows/docker.yml/badge.svg)](https://github.com/nschmidtdev/MemeBattle/actions/workflows/docker.yml)
 
 A self-hosted, browser-based party game inspired by *Make It Meme*. Players get a meme
 template, caption it under time pressure, and vote on each other's memes. The best
@@ -80,6 +81,33 @@ local-only access.
 Postgres data and uploaded images persist in the `pgdata` and `uploads` volumes.
 Remove them with `docker compose down -v` (this deletes all data).
 
+### Prebuilt container image
+
+The `Docker image` workflow builds on every push to `main`, every `v*.*.*` tag and
+every pull request (build only, no push). Published images live on GHCR:
+
+- `ghcr.io/nschmidtdev/memebattle:latest` — current `main`
+- `ghcr.io/nschmidtdev/memebattle:sha-<commit>` — exact commit
+- `ghcr.io/nschmidtdev/memebattle:1.2.3` and `:1.2` — release tags
+
+Both `linux/amd64` and `linux/arm64` are published. To run the prebuilt image with
+the bundled database, set `APP_IMAGE` in `.env`:
+
+```sh
+# .env
+APP_IMAGE=ghcr.io/nschmidtdev/memebattle:latest
+```
+
+```sh
+docker compose pull app
+docker compose up -d --no-build
+```
+
+On the first publish, set the GHCR package visibility to **public** (package
+settings → Change visibility) so anonymous `docker pull` works; a private package
+requires a GitHub token. Without `APP_IMAGE`, Compose builds locally and tags the
+result `meme-battle-app:local`.
+
 ## Development
 
 Node.js 24 is the supported runtime (`.nvmrc`); `package.json` allows `>=22 <27`.
@@ -138,6 +166,7 @@ All configuration is via environment variables (see `.env.example`):
 | `DATABASE_URL`      | — (required)             | Postgres connection string. Compose builds it from `POSTGRES_PASSWORD`. |
 | `PORT`              | `3000`                   | HTTP port the app listens on (validated 1–65535). Docker: always 3000 inside the container. |
 | `APP_PORT`          | `3000`                   | Host port published by Docker Compose. |
+| `APP_IMAGE`         | `meme-battle-app:local`  | Image Compose runs. Set to `ghcr.io/nschmidtdev/memebattle:latest` to use the published image. |
 | `APP_BIND`          | `0.0.0.0`                | Host interface published by Docker Compose (`127.0.0.1` for local-only). |
 | `CORS_ORIGIN`       | unset = same-origin only | Comma-separated extra allowed Socket.io origins (e.g. `https://a.example,http://192.168.1.10:3000`). Same-origin is always allowed; `*` allows all. |
 | `ADMIN_EMAIL`       | `admin@localhost` (Compose) | Admin login email, created on first boot. |

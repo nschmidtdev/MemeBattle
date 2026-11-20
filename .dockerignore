@@ -3,8 +3,12 @@ node_modules
 out
 data
 .git
+.github
+coverage
+*.tsbuildinfo
 *.log
 .env
 .env.*
 !.env.example
 REVIEW.md
+tests

@@ -17,6 +17,7 @@ services:
       retries: 10
 
   app:
+    image: ${APP_IMAGE:-meme-battle-app:local}
     build: .
     restart: unless-stopped
     ports:
