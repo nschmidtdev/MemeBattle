@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import type { TemplateBox, TemplateData, TextAlign } from '@/lib/types'
 import {
@@ -63,6 +63,18 @@ export default function TemplateEditor({ template, onClose, onSaved, onReload }:
     () => ({ texts: Object.fromEntries(boxes.map((b) => [b.id, b.defaultText ?? b.id])), lines: [] }),
     [boxes],
   )
+
+  // The editor is an overlay; Escape closes it unless a save is in flight.
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !busy) {
+        e.preventDefault()
+        onClose()
+      }
+    }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [busy, onClose])
 
   const patchBox = (id: string, patch: Partial<TemplateBox>) =>
     setBoxes((prev) => prev.map((b) => (b.id === id ? { ...b, ...patch } : b)))
@@ -176,193 +188,258 @@ export default function TemplateEditor({ template, onClose, onSaved, onReload }:
   const atBoxLimit = boxes.length >= MAX_TEMPLATE_BOXES
 
   return (
-    <div className="panel" style={{ marginTop: 10 }}>
-      <h3 className="row spread">
-        <span>Edit template</span>
-        <button className="ghost" onClick={onClose}>
-          ✕ Close
-        </button>
-      </h3>
-
-      {error && (
-        <div className="error-banner row spread">
-          <span>{error}</span>
-          {conflict && (
-            <button className="ghost" onClick={reload} disabled={busy || reloading}>
-              {reloading ? 'Reloading…' : 'Reload latest'}
-            </button>
-          )}
-        </div>
-      )}
-
-      <div className="row" style={{ gap: 24, flexWrap: 'wrap', alignItems: 'flex-start' }}>
-        <div style={{ flex: '0 1 300px', minWidth: 260 }}>
-          <p className="muted">Preview</p>
-          <div className="meme-canvas-wrap">
-            <MemeView template={previewTemplate} submission={previewSubmission} maxDim={300} />
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-0 backdrop-blur-sm sm:items-center sm:p-4"
+      role="presentation"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose()
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="template-editor-title"
+        tabIndex={-1}
+        autoFocus
+        className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-t-2xl border border-line bg-card shadow-2xl outline-none sm:rounded-2xl"
+      >
+        {/* Fixed header: title + close stay visible while the body scrolls. */}
+        <header className="flex flex-none items-start justify-between gap-3 border-b border-line bg-card2/40 px-4 py-3">
+          <div className="min-w-0">
+            <h2 id="template-editor-title" className="flex flex-wrap items-center gap-2 text-lg font-bold">
+              <span>Edit template</span>
+              <span className="badge max-w-full truncate">{template.name}</span>
+            </h2>
+            <p className="text-xs text-dim">
+              {isFreeform ? 'Freeform template' : `Fixed template · ${boxes.length} starting boxes`}
+            </p>
           </div>
+          <button className="ghost px-2 py-1" onClick={onClose} aria-label="Close template editor">
+            ✕ Close
+          </button>
+        </header>
 
-          <div style={{ display: 'grid', gap: 8, marginTop: 10 }}>
-            <label className="muted">
-              Name
-              <input value={name} maxLength={60} onChange={(e) => setName(e.target.value)} />
-            </label>
-            <label className="muted">
-              Image
-              <input
-                type="file"
-                accept={UPLOAD_ACCEPT}
-                onChange={(e) => {
-                  const f = e.target.files?.[0]
-                  if (f) upload(f)
-                  e.target.value = ''
-                }}
-              />
-            </label>
-            {uploading && <p className="muted">Uploading…</p>}
-            <label className="checkbox-row">
-              <input type="checkbox" checked={isFreeform} onChange={(e) => setIsFreeform(e.target.checked)} />
-              <span>
-                Freeform (players start with an empty meme){' '}
-                {!isFreeform && <em>— note: boxes below are only starting positions now; players can move, restyle, delete and add texts freely</em>}
-              </span>
-            </label>
-            <label className="checkbox-row">
-              <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />
-              <span>Active (available in game)</span>
-            </label>
-          </div>
-        </div>
-
-        <div style={{ flex: '1 1 380px', minWidth: 320 }}>
-          <p className="muted">
-            Text boxes {isFreeform ? '— disabled for freeform templates' : `(${boxes.length}/${MAX_TEMPLATE_BOXES})`}
-          </p>
-          {isFreeform ? (
-            <p className="muted">Players can place as many text lines on the image as they want.</p>
-          ) : (
-            <>
-              <div style={{ display: 'grid', gap: 8 }}>
-                {boxes.map((b, i) => (
-                  <div key={b.id} className="panel" style={{ padding: 10 }}>
-                    <div className="row spread">
-                      <strong>Box {i + 1}</strong>
-                      <button className="danger" onClick={() => removeBox(b.id)}>
-                        Remove
-                      </button>
-                    </div>
-                    <div className="row" style={{ gap: 10, marginTop: 8, flexWrap: 'wrap' }}>
-                      <label className="muted">
-                        Label{' '}
-                        <input
-                          value={b.defaultText ?? ''}
-                          maxLength={60}
-                          onChange={(e) => patchBox(b.id, { defaultText: e.target.value })}
-                          style={{ width: 140 }}
-                        />
-                      </label>
-                      <label className="muted">
-                        X{' '}
-                        <Num
-                          value={b.x}
-                          min={LINE_BOUNDS.xMin}
-                          max={LINE_BOUNDS.xMax}
-                          onChange={(v) => patchBox(b.id, { x: v })}
-                        />
-                      </label>
-                      <label className="muted">
-                        Y{' '}
-                        <Num
-                          value={b.y}
-                          min={LINE_BOUNDS.yMin}
-                          max={LINE_BOUNDS.yMax}
-                          onChange={(v) => patchBox(b.id, { y: v })}
-                        />
-                      </label>
-                      <label className="muted">
-                        Width{' '}
-                        <Num
-                          value={b.w}
-                          min={TEXT_WIDTH_BOUNDS.min}
-                          max={TEXT_WIDTH_BOUNDS.max}
-                          step={0.05}
-                          onChange={(v) => patchBox(b.id, { w: v })}
-                        />
-                      </label>
-                      <label className="muted">
-                        Size{' '}
-                        <Num
-                          value={b.fontSize}
-                          min={LINE_BOUNDS.fontSizeMin}
-                          max={LINE_BOUNDS.fontSizeMax}
-                          step={0.005}
-                          onChange={(v) => patchBox(b.id, { fontSize: v })}
-                        />
-                      </label>
-                      <label className="muted">
-                        Rotation{' '}
-                        <Num
-                          value={b.rotation}
-                          min={ROTATION_BOUNDS.min}
-                          max={ROTATION_BOUNDS.max}
-                          step={1}
-                          onChange={(v) => patchBox(b.id, { rotation: v })}
-                        />
-                      </label>
-                      <label className="muted">
-                        Align{' '}
-                        <select
-                          value={b.align}
-                          onChange={(e) => patchBox(b.id, { align: e.target.value as TextAlign })}
-                        >
-                          <option value="left">left</option>
-                          <option value="center">center</option>
-                          <option value="right">right</option>
-                        </select>
-                      </label>
-                      <label className="muted">
-                        Font{' '}
-                        <select value={b.font} onChange={(e) => patchBox(b.id, { font: e.target.value })}>
-                          {FONT_OPTIONS.map((f) => (
-                            <option key={f} value={f}>
-                              {f}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="muted">
-                        Color <input type="color" value={b.color} onChange={(e) => patchBox(b.id, { color: e.target.value })} />
-                      </label>
-                      <label className="muted">
-                        Outline <input type="color" value={b.stroke} onChange={(e) => patchBox(b.id, { stroke: e.target.value })} />
-                      </label>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div className="row" style={{ marginTop: 8, gap: 8, alignItems: 'center' }}>
-                <button className="ghost" disabled={atBoxLimit} onClick={addBox}>
-                  + Add box
+        {error && (
+          <div className="flex-none px-4 pt-3">
+            <div className="error-banner mb-0 flex flex-wrap items-start justify-between gap-2" role="alert">
+              <span className="min-w-0 flex-1 basis-[220px]">{error}</span>
+              {conflict && (
+                <button className="ghost shrink-0" onClick={reload} disabled={busy || reloading}>
+                  {reloading ? 'Reloading…' : 'Reload latest'}
                 </button>
-                <span className="muted">
-                  {boxes.length}/{MAX_TEMPLATE_BOXES} boxes{atBoxLimit ? ' — maximum reached' : ''}
-                </span>
-              </div>
-              {tooManyBoxes && (
-                <p className="muted">
-                  This template has more than {MAX_TEMPLATE_BOXES} boxes. Remove {boxes.length - MAX_TEMPLATE_BOXES} before saving;
-                  the API accepts at most {MAX_TEMPLATE_BOXES}.
-                </p>
               )}
-            </>
-          )}
+            </div>
+          </div>
+        )}
 
-          <div className="row" style={{ marginTop: 14 }}>
-            <button className="primary" disabled={busy || uploading || reloading || tooManyBoxes} onClick={save}>
+        {/* Only this region scrolls inside the viewport-capped dialog. */}
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
+          <div className="grid gap-5 lg:grid-cols-[minmax(250px,300px)_minmax(0,1fr)] lg:items-start">
+            <div className="min-w-0">
+              <p className="muted mb-1">Preview</p>
+              <div className="meme-canvas-wrap">
+                <MemeView template={previewTemplate} submission={previewSubmission} maxDim={300} />
+              </div>
+
+              <div className="mt-2.5 grid gap-2">
+                <label className="muted">
+                  Name
+                  <input
+                    value={name}
+                    maxLength={60}
+                    onChange={(e) => setName(e.target.value)}
+                    className="mt-1 w-full"
+                  />
+                </label>
+                <label className="muted">
+                  Image
+                  <input
+                    type="file"
+                    accept={UPLOAD_ACCEPT}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0]
+                      if (f) upload(f)
+                      e.target.value = ''
+                    }}
+                    className="mt-1 w-full"
+                  />
+                </label>
+                {uploading && <p className="muted">Uploading…</p>}
+                <label className="checkbox-row">
+                  <input type="checkbox" checked={isFreeform} onChange={(e) => setIsFreeform(e.target.checked)} />
+                  <span>
+                    Freeform (players start with an empty meme){' '}
+                    {!isFreeform && (
+                      <em>
+                        — note: boxes below are only starting positions now; players can move, restyle, delete and add
+                        texts freely
+                      </em>
+                    )}
+                  </span>
+                </label>
+                <label className="checkbox-row">
+                  <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />
+                  <span>Active (available in game)</span>
+                </label>
+              </div>
+            </div>
+
+            <div className="min-w-0">
+              <p className="muted">
+                Text boxes{' '}
+                {isFreeform ? '— disabled for freeform templates' : `(${boxes.length}/${MAX_TEMPLATE_BOXES})`}
+              </p>
+              {isFreeform ? (
+                <p className="muted">Players can place as many text lines on the image as they want.</p>
+              ) : (
+                <>
+                  <div className="grid gap-2">
+                    {boxes.map((b, i) => (
+                      <div key={b.id} className="panel mb-0 p-2.5">
+                        <div className="row spread">
+                          <strong>Box {i + 1}</strong>
+                          <button className="danger" onClick={() => removeBox(b.id)}>
+                            Remove
+                          </button>
+                        </div>
+                        <div className="mt-2 flex flex-wrap items-end gap-x-2.5 gap-y-2">
+                          <label className="muted">
+                            Label{' '}
+                            <input
+                              value={b.defaultText ?? ''}
+                              maxLength={60}
+                              onChange={(e) => patchBox(b.id, { defaultText: e.target.value })}
+                              style={{ width: 140 }}
+                            />
+                          </label>
+                          <label className="muted">
+                            X{' '}
+                            <Num
+                              value={b.x}
+                              min={LINE_BOUNDS.xMin}
+                              max={LINE_BOUNDS.xMax}
+                              onChange={(v) => patchBox(b.id, { x: v })}
+                            />
+                          </label>
+                          <label className="muted">
+                            Y{' '}
+                            <Num
+                              value={b.y}
+                              min={LINE_BOUNDS.yMin}
+                              max={LINE_BOUNDS.yMax}
+                              onChange={(v) => patchBox(b.id, { y: v })}
+                            />
+                          </label>
+                          <label className="muted">
+                            Width{' '}
+                            <Num
+                              value={b.w}
+                              min={TEXT_WIDTH_BOUNDS.min}
+                              max={TEXT_WIDTH_BOUNDS.max}
+                              step={0.05}
+                              onChange={(v) => patchBox(b.id, { w: v })}
+                            />
+                          </label>
+                          <label className="muted">
+                            Size{' '}
+                            <Num
+                              value={b.fontSize}
+                              min={LINE_BOUNDS.fontSizeMin}
+                              max={LINE_BOUNDS.fontSizeMax}
+                              step={0.005}
+                              onChange={(v) => patchBox(b.id, { fontSize: v })}
+                            />
+                          </label>
+                          <label className="muted">
+                            Rotation{' '}
+                            <Num
+                              value={b.rotation}
+                              min={ROTATION_BOUNDS.min}
+                              max={ROTATION_BOUNDS.max}
+                              step={1}
+                              onChange={(v) => patchBox(b.id, { rotation: v })}
+                            />
+                          </label>
+                          <label className="muted">
+                            Align{' '}
+                            <select
+                              value={b.align}
+                              onChange={(e) => patchBox(b.id, { align: e.target.value as TextAlign })}
+                            >
+                              <option value="left">left</option>
+                              <option value="center">center</option>
+                              <option value="right">right</option>
+                            </select>
+                          </label>
+                          <label className="muted">
+                            Font{' '}
+                            <select value={b.font} onChange={(e) => patchBox(b.id, { font: e.target.value })}>
+                              {FONT_OPTIONS.map((f) => (
+                                <option key={f} value={f}>
+                                  {f}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="muted">
+                            Color{' '}
+                            <input
+                              type="color"
+                              value={b.color}
+                              onChange={(e) => patchBox(b.id, { color: e.target.value })}
+                            />
+                          </label>
+                          <label className="muted">
+                            Outline{' '}
+                            <input
+                              type="color"
+                              value={b.stroke}
+                              onChange={(e) => patchBox(b.id, { stroke: e.target.value })}
+                            />
+                          </label>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <button className="ghost" disabled={atBoxLimit} onClick={addBox}>
+                      + Add box
+                    </button>
+                    <span className="muted">
+                      {boxes.length}/{MAX_TEMPLATE_BOXES} boxes{atBoxLimit ? ' — maximum reached' : ''}
+                    </span>
+                  </div>
+                  {tooManyBoxes && (
+                    <p className="muted">
+                      This template has more than {MAX_TEMPLATE_BOXES} boxes. Remove{' '}
+                      {boxes.length - MAX_TEMPLATE_BOXES} before saving; the API accepts at most {MAX_TEMPLATE_BOXES}.
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Fixed footer: save stays reachable no matter how many boxes exist. */}
+        <footer className="flex flex-none flex-wrap items-center justify-between gap-2 border-t border-line bg-card2/50 px-4 py-3">
+          <span className="text-xs text-dim" aria-live="polite">
+            {isFreeform ? 'Freeform template' : `${boxes.length}/${MAX_TEMPLATE_BOXES} boxes`}
+            {uploading ? ' · uploading image…' : ''}
+          </span>
+          <div className="flex items-center gap-2">
+            <button className="ghost" onClick={onClose}>
+              Cancel
+            </button>
+            <button
+              className="primary"
+              disabled={busy || uploading || reloading || tooManyBoxes}
+              onClick={save}
+            >
               {busy ? 'Saving…' : 'Save template'}
             </button>
           </div>
-        </div>
+        </footer>
       </div>
     </div>
   )
