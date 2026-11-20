@@ -418,7 +418,7 @@ export default function FreeformEditor({
         )}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src={imageUrl(template.imageKey)}
+          src={imageUrl(template.imageKey, 1200)}
           alt={template.name}
           className="pointer-events-none absolute left-0 w-full"
           style={{ top: `${(padTopRatio / totalRatio) * 100}%`, height: `${(1 / totalRatio) * 100}%` }}

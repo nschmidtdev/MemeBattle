@@ -29,9 +29,10 @@ export default function MemeView({ template, submission, maxDim = 640, className
   const onRenderedRef = useRef(onRendered)
   const renderedRef = useRef(false)
   const [failed, setFailed] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [gifLayout, setGifLayout] = useState<MemeCanvasLayout | null>(null)
 
-  const url = imageUrl(template.imageKey)
+  const url = imageUrl(template.imageKey, maxDim)
 
   // Keep the latest callback without re-running the render effect for every
   // parent render (inline callbacks are common).
@@ -42,6 +43,7 @@ export default function MemeView({ template, submission, maxDim = 640, className
   useEffect(() => {
     let alive = true
     setFailed(false)
+    setLoading(true)
     setGifLayout(null)
     renderedRef.current = false
 
@@ -72,6 +74,7 @@ export default function MemeView({ template, submission, maxDim = 640, className
           // frame is captured). Keep the live <img> in the DOM and draw only
           // the text on a transparent canvas above it.
           setGifLayout(memeLayoutForImage(template, submission, img, maxDim))
+          setLoading(false)
           return
         }
 
@@ -84,6 +87,7 @@ export default function MemeView({ template, submission, maxDim = 640, className
         if (!ctx) return
         ctx.clearRect(0, 0, canvas.width, canvas.height)
         ctx.drawImage(rendered, 0, 0)
+        setLoading(false)
         if (!renderedRef.current) {
           renderedRef.current = true
           try {
@@ -93,7 +97,10 @@ export default function MemeView({ template, submission, maxDim = 640, className
           }
         }
       } catch {
-        if (alive) setFailed(true)
+        if (alive) {
+          setFailed(true)
+          setLoading(false)
+        }
       }
     })()
 
@@ -182,8 +189,16 @@ export default function MemeView({ template, submission, maxDim = 640, className
   }
 
   return (
-    <div className="meme-canvas-wrap">
+    <div className="meme-canvas-wrap relative">
       <canvas ref={canvasRef} className={`${failed ? 'hidden' : ''} ${className ?? ''}`} />
+      {loading && !failed && (
+        <div className="pointer-events-none absolute inset-0 z-10 flex min-h-[6rem] items-center justify-center bg-night2/70">
+          <span
+            className="h-7 w-7 animate-spin rounded-full border-2 border-line border-t-sun"
+            aria-label="Loading meme"
+          />
+        </div>
+      )}
       {failed && (
         <div style={{ padding: 20, color: 'var(--dim)' }}>template image unavailable</div>
       )}

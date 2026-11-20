@@ -25,6 +25,8 @@ import {
   type LobbyState,
 } from '@/lib/client'
 import { isMuted, setMuted, sounds } from '@/lib/sounds'
+import { loadImage } from '@/lib/meme'
+import { imageUrl } from '@/lib/images'
 import LobbyView from './views/LobbyView'
 import CaptionView from './views/CaptionView'
 import VotingView from './views/VotingView'
@@ -59,6 +61,11 @@ interface VotingState {
   rule: ChaosRule | null
   canDownvote: boolean
   scoresEnabled: boolean
+  /**
+   * True while the server holds the countdown: the meme may already render in
+   * the background, but it is not revealed before everyone received it.
+   */
+  held: boolean
 }
 
 type CopyState = 'idle' | 'ok' | 'fail'
@@ -277,11 +284,12 @@ export default function LobbyRoom({ code }: { code: string }) {
       rule,
       canDownvote,
       scoresEnabled,
+      held,
     }: {
       round: number
       memes: VotingMemeInfo[]
       current: number
-      timeLeft: number
+      timeLeft?: number | null
       timeTotal?: number
       votes?: Record<number, VoteValue>
       buddyIndex?: number | null
@@ -289,7 +297,11 @@ export default function LobbyRoom({ code }: { code: string }) {
       rule?: ChaosRule | null
       canDownvote?: boolean
       scoresEnabled?: boolean
+      held?: boolean
     }) => {
+      // A new voting payload always replaces the clock source: the caption
+      // countdown must not keep running while the meme is still held.
+      endsAtRef.current = null
       setVoting({
         round,
         memes,
@@ -297,31 +309,53 @@ export default function LobbyRoom({ code }: { code: string }) {
         votes: votes ?? {},
         // Resume payloads carry the player's own pick; older payloads omit it.
         buddyIndex: typeof buddyIndex === 'number' ? buddyIndex : null,
-        timeTotal: timeTotal ?? timeLeft,
+        timeTotal: timeTotal ?? (typeof timeLeft === 'number' ? timeLeft : 0),
         mode: mode ?? 'normal',
         rule: rule ?? null,
         canDownvote: canDownvote ?? true,
         scoresEnabled: scoresEnabled ?? true,
+        // Older payloads only existed once the clock ran.
+        held: held ?? false,
       })
       currentMemeRef.current = current
       setCaption(null)
       setRoundResult(null)
       setGameOver(null)
       setVoteError(null)
-      startTimer(timeLeft)
-      // The following voting:progress(0) plays memeShown(); don't double it here.
+      // Reconnects arrive with a running clock; fresh rounds wait for voting:go.
+      if (!held && typeof timeLeft === 'number') startTimer(timeLeft)
+      // Warm the cache for every meme of the round: the server holds each
+      // meme until all clients rendered it, so preloading keeps that wait short.
+      for (const meme of memes) {
+        void loadImage(imageUrl(meme.template.imageKey, 720)).catch(() => {})
+      }
     }
 
     const onVotingProgress = ({
       index,
       timeLeft,
+      held,
     }: {
       index: number
-      timeLeft: number
+      timeLeft?: number | null
+      held?: boolean
     }) => {
       currentMemeRef.current = index
-      setVoting((prev) => (prev ? { ...prev, current: index } : prev))
-      startTimer(timeLeft)
+      // Held memes have no running clock: never show the previous meme's timer.
+      if (held) endsAtRef.current = null
+      setVoting((prev) => (prev ? { ...prev, current: index, held: held ?? false } : prev))
+      // Fresh rounds are held until every client reported the meme rendered.
+      if (!held && typeof timeLeft === 'number') {
+        startTimer(timeLeft)
+        sounds.memeShown()
+      }
+    }
+
+    const onVotingGo = ({ index, timeLeft }: { index: number; timeLeft: number }) => {
+      setVoting((prev) => (prev ? { ...prev, held: false } : prev))
+      // A stale go (e.g. after reconnecting to the next meme) must not touch the clock.
+      if (currentMemeRef.current !== index) return
+      if (typeof timeLeft === 'number') startTimer(timeLeft)
       sounds.memeShown()
     }
 
@@ -363,6 +397,7 @@ export default function LobbyRoom({ code }: { code: string }) {
     socket.on(Events.CaptionTemplate, onCaptionTemplate)
     socket.on(Events.PhaseVoting, onPhaseVoting)
     socket.on(Events.VotingProgress, onVotingProgress)
+    socket.on(Events.VotingGo, onVotingGo)
     socket.on(Events.VotingTimer, onVotingTimer)
     socket.on(Events.BuddyPicked, onBuddyPicked)
     socket.on(Events.RoundResults, onRoundResults)
@@ -398,6 +433,7 @@ export default function LobbyRoom({ code }: { code: string }) {
       socket.off(Events.CaptionTemplate, onCaptionTemplate)
       socket.off(Events.PhaseVoting, onPhaseVoting)
       socket.off(Events.VotingProgress, onVotingProgress)
+      socket.off(Events.VotingGo, onVotingGo)
       socket.off(Events.VotingTimer, onVotingTimer)
       socket.off(Events.BuddyPicked, onBuddyPicked)
       socket.off(Events.RoundResults, onRoundResults)
@@ -473,6 +509,11 @@ export default function LobbyRoom({ code }: { code: string }) {
   }, [])
   const pickBuddy = useCallback((index: number) => {
     socketRef.current?.emit(Events.BuddyPick, { index })
+  }, [])
+  const memeReady = useCallback((index: number) => {
+    // This client rendered the meme: the server may start the countdown once
+    // every connected player acknowledged.
+    socketRef.current?.emit(Events.VotingReady, { index })
   }, [])
   const sendSettings = useCallback((patch: Partial<LobbyState['settings']>) => {
     socketRef.current?.emit(Events.Settings, patch)
@@ -735,6 +776,8 @@ export default function LobbyRoom({ code }: { code: string }) {
           initialVotes={voting.votes}
           voteError={voteError}
           onVote={castVote}
+          onMemeReady={memeReady}
+          revealed={!voting.held}
           buddyIndex={voting.buddyIndex}
           onPickBuddy={pickBuddy}
           rule={voting.rule}

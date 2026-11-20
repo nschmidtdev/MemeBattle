@@ -258,6 +258,16 @@ export function initSockets(io: Server): () => void {
     )
 
     socket.on(
+      Events.VotingReady,
+      guard(socket, Events.VotingReady, (data: Record<string, unknown>) => {
+        const b = socket.data.mb as BoundSocket | undefined
+        if (!b) return
+        // Acks are advisory: stale or repeated indexes are simply ignored.
+        b.lobby.markVotingReady(socket.id, Number(data?.index))
+      }),
+    )
+
+    socket.on(
       Events.BuddyPick,
       guard(socket, Events.BuddyPick, (data: Record<string, unknown>) => {
         const b = socket.data.mb as BoundSocket | undefined

@@ -292,6 +292,8 @@ export const Events = {
   Reroll: 'caption:reroll',
   Vote: 'vote:cast',
   BuddyPick: 'buddy:pick',
+  /** The client rendered the current voting meme and is ready for the clock. */
+  VotingReady: 'voting:ready',
   PublicList: 'public:list',
   PlayAgain: 'game:play-again',
   Kick: 'lobby:kick',
@@ -309,6 +311,10 @@ export const Events = {
   PhaseCaption: 'phase:caption',
   PhaseVoting: 'phase:voting',
   VotingProgress: 'voting:progress',
+  /** Everyone received the meme: reveal it and start the countdown. */
+  VotingGo: 'voting:go',
+  /** Gate progress while the server waits for slow clients. */
+  VotingGate: 'voting:gate',
   VotingTimer: 'voting:timer',
   BuddyPicked: 'buddy:picked',
   RoundResults: 'round:results',

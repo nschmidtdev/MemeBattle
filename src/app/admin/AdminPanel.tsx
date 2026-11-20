@@ -636,7 +636,7 @@ export default function AdminPanel({ email }: Props) {
                       <div className="relative aspect-[4/3] w-full overflow-hidden bg-black">
                         {/* eslint-disable-next-line @next/next/no-img-element -- admin thumbnail for arbitrary uploaded images */}
                         <img
-                          src={imageUrl(t.imageKey)}
+                          src={imageUrl(t.imageKey, 320)}
                           alt=""
                           loading="lazy"
                           decoding="async"
@@ -727,7 +727,7 @@ export default function AdminPanel({ email }: Props) {
         >
           {/* eslint-disable-next-line @next/next/no-img-element -- enlarged hover preview for arbitrary uploaded images */}
           <img
-            src={imageUrl(hoverPreview.template.imageKey)}
+            src={imageUrl(hoverPreview.template.imageKey, 1200)}
             alt=""
             decoding="async"
             className="mx-auto block max-h-[min(56vh,420px)] w-full rounded-lg object-contain"

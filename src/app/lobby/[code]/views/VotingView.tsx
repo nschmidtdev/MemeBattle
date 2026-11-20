@@ -17,6 +17,13 @@ interface Props {
   /** This player's own Meme Buddy pick, if already made this round. */
   buddyIndex: number | null
   onPickBuddy: (index: number) => void
+  /** The current meme finished rendering: tell the server we are ready. */
+  onMemeReady?: (index: number) => void
+  /**
+   * The server confirmed every client received the current meme. Until then
+   * the meme stays covered and the countdown does not start.
+   */
+  revealed: boolean
   rule: ChaosRule | null
   canDownvote: boolean
   scoresEnabled: boolean
@@ -37,6 +44,8 @@ export default function VotingView({
   voteError,
   buddyIndex,
   onPickBuddy,
+  onMemeReady,
+  revealed,
   rule,
   canDownvote,
   scoresEnabled,
@@ -44,6 +53,8 @@ export default function VotingView({
   const [myVotes, setMyVotes] = useState<Record<number, VoteValue>>(() => ({ ...(initialVotes ?? {}) }))
   /** Index of the meme whose canvas finished rendering — vote only on that one. */
   const [renderedIndex, setRenderedIndex] = useState<number | null>(null)
+  /** Last index reported to the server (images may render more than once). */
+  const readySentRef = useRef<number | null>(null)
   const pendingRef = useRef<{ index: number; prev?: VoteValue } | null>(null)
 
   // Merge restored votes (reconnect) without dropping optimistic local ones.
@@ -87,10 +98,18 @@ export default function VotingView({
   /** Submitted nothing this round: no votes and no Buddy pick. */
   const isSpectator = !memes.some((m) => m.mine)
   const myVote = myVotes[current]
-  const ready = renderedIndex === current
+  const rendered = renderedIndex === current
+  const ready = rendered && revealed
   const progress = memes.length > 0 ? ((current + 1) / memes.length) * 100 : 0
   const buddyIsCurrent = buddyIndex !== null && buddyIndex === current
   const voteButtons = canDownvote ? VOTE_BTNS : VOTE_BTNS.filter((b) => b.value !== 'down')
+
+  const handleRendered = () => {
+    setRenderedIndex(current)
+    if (readySentRef.current === current) return
+    readySentRef.current = current
+    onMemeReady?.(current)
+  }
 
   const vote = (value: VoteValue) => {
     if (!ready || isOwn) return
@@ -133,15 +152,33 @@ export default function VotingView({
 
       <div className="overflow-clip rounded-2xl border border-line bg-card shadow-xl">
         <div className="p-2 sm:p-3">
-          <div className="meme-canvas-wrap border-none bg-transparent">
+          <div className="meme-canvas-wrap relative border-none bg-transparent">
             <MemeView
               key={current}
               template={meme.template}
               submission={meme.submission}
               maxDim={720}
               className="max-h-[calc(100dvh-21rem)] w-auto max-w-full sm:max-h-[calc(100dvh-17rem)]"
-              onRendered={() => setRenderedIndex(current)}
+              onRendered={handleRendered}
             />
+            {/* The meme loads behind this cover: it is only revealed (and the
+                clock only starts) when every client reported it rendered. */}
+            {!ready && (
+              <div className="absolute inset-0 z-10 flex min-h-[9rem] flex-col items-center justify-center gap-3 rounded-xl bg-night2 px-4 text-center">
+                <span
+                  className="h-8 w-8 animate-spin rounded-full border-2 border-line border-t-sun"
+                  aria-hidden="true"
+                />
+                <div>
+                  <p className="text-sm font-bold">Preparing meme…</p>
+                  <p className="mt-1 text-xs leading-snug text-dim">
+                    {revealed
+                      ? 'Almost there…'
+                      : 'Waiting until everyone received it — the timer starts afterwards.'}
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="mt-3 flex items-center justify-center gap-2 text-sm text-dim">
@@ -236,7 +273,9 @@ export default function VotingView({
                   ? '🌿 Relaxed round — the votes are just for fun'
                   : isOwn || ready
                     ? '🤫 Votes stay secret until the results'
-                    : 'Preparing meme…'}
+                    : revealed
+                      ? 'Preparing meme…'
+                      : 'Waiting until everyone received the meme — the timer starts afterwards'}
               </p>
             </>
           )}

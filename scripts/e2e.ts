@@ -55,7 +55,7 @@ function setCookies(res: Response): string[] {
   return raw ? [raw] : []
 }
 
-function connect(): Socket {
+function connect(options: { autoVotingReady?: boolean } = {}): Socket {
   const s = io(BASE, {
     transports: ['websocket'],
     reconnection: false,
@@ -63,12 +63,23 @@ function connect(): Socket {
     autoConnect: false,
   })
   sockets.add(s)
+  // The voting clock is gated on client acks. Socket clients have no canvas,
+  // so they acknowledge every meme that is shown (or resumed) by default;
+  // tests that exercise the timeout pass autoVotingReady: false.
+  if (options.autoVotingReady !== false) {
+    s.on('voting:progress', (p: { index?: unknown }) => {
+      if (typeof p?.index === 'number') s.emit('voting:ready', { index: p.index })
+    })
+    s.on('phase:voting', (p: { current?: unknown }) => {
+      if (typeof p?.current === 'number') s.emit('voting:ready', { index: p.current })
+    })
+  }
   return s
 }
 
 /** Register the connect waiter before the handshake starts. */
-async function openSocket(): Promise<Socket> {
-  const s = connect()
+async function openSocket(options: { autoVotingReady?: boolean } = {}): Promise<Socket> {
+  const s = connect(options)
   const connected = waitEvent(s, 'connect', 10000)
   s.connect()
   await connected
@@ -1049,6 +1060,92 @@ async function runSuite() {
       'forced submissions off: empty auto-submit is rejected',
       /at least one text/i.test(err.message),
       err,
+    )
+    H.disconnect()
+    G.disconnect()
+  }
+
+  // ------------------------------------------------------------- voting gate
+  console.log('\nVoting gate:')
+  {
+    // Both clients ack: the meme is held for them, then revealed with full time.
+    const H = await openSocket()
+    const G = await openSocket()
+    const hJoined = waitEvent<any>(H, 'lobby:joined', 10000)
+    H.emit('lobby:join', {
+      username: 'GateHost',
+      create: true,
+      isPublic: false,
+      lobbyName: 'Voting Gate',
+      settings: { rounds: 1, rerolls: 0, captionTime: 5, voteTime: 5, packIds: [pack.id] },
+    })
+    const h: { code: string } = await hJoined
+    const gJoined = waitEvent<any>(G, 'lobby:joined', 10000)
+    G.emit('lobby:join', { username: 'GateGuest', code: h.code })
+    await gJoined
+    await new Promise((r) => setTimeout(r, 150))
+
+    const phaseP = waitEvent<any>(H, 'phase:caption', 15000)
+    const hTpl = waitEvent<any>(H, 'caption:template', 15000)
+    const gTpl = waitEvent<any>(G, 'caption:template', 15000)
+    H.emit('lobby:start')
+    await Promise.all([phaseP, hTpl, gTpl])
+
+    const hProgress = waitEvent<any>(H, 'voting:progress', 20000)
+    const gProgress = waitEvent<any>(G, 'voting:progress', 20000)
+    const hGo = waitEvent<any>(H, 'voting:go', 20000)
+    H.emit('caption:submit', { texts: { a: 'gate host' }, lines: [] })
+    G.emit('caption:submit', { texts: { a: 'gate guest' }, lines: [] })
+    const progress = await hProgress
+    await gProgress
+    ok(
+      'voting gate: progress is held until clients report the meme',
+      progress.held === true && progress.timeLeft === null,
+      progress,
+    )
+    const go = await hGo
+    ok('voting gate: go reveals it with the full vote time', go.index === 0 && go.timeLeft === 5, go)
+    H.disconnect()
+    G.disconnect()
+  }
+
+  {
+    // One client never acks (dead tab): the gate times out and the round goes on.
+    const H = await openSocket()
+    const G = await openSocket({ autoVotingReady: false })
+    const hJoined = waitEvent<any>(H, 'lobby:joined', 10000)
+    H.emit('lobby:join', {
+      username: 'GateTimeoutHost',
+      create: true,
+      isPublic: false,
+      lobbyName: 'Gate Timeout',
+      settings: { rounds: 1, rerolls: 0, captionTime: 5, voteTime: 5, packIds: [pack.id] },
+    })
+    const h: { code: string } = await hJoined
+    const gJoined = waitEvent<any>(G, 'lobby:joined', 10000)
+    G.emit('lobby:join', { username: 'GateTimeoutGuest', code: h.code })
+    await gJoined
+    await new Promise((r) => setTimeout(r, 150))
+
+    const phaseP = waitEvent<any>(H, 'phase:caption', 15000)
+    const hTpl = waitEvent<any>(H, 'caption:template', 15000)
+    const gTpl = waitEvent<any>(G, 'caption:template', 15000)
+    H.emit('lobby:start')
+    await Promise.all([phaseP, hTpl, gTpl])
+
+    const hProgress = waitEvent<any>(H, 'voting:progress', 20000)
+    const gProgress = waitEvent<any>(G, 'voting:progress', 20000)
+    H.emit('caption:submit', { texts: { a: 'timeout host' }, lines: [] })
+    G.emit('caption:submit', { texts: { a: 'timeout guest' }, lines: [] })
+    await hProgress
+    await gProgress
+    const startedAt = Date.now()
+    const go = await waitEvent<any>(H, 'voting:go', 12000)
+    const waited = Date.now() - startedAt
+    ok(
+      'voting gate: a missing ack starts the clock after the timeout',
+      go.index === 0 && go.timeLeft === 5 && waited >= 4000,
+      { waited, go },
     )
     H.disconnect()
     G.disconnect()

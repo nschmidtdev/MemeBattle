@@ -1,9 +1,9 @@
 import fs from 'fs'
 import { NextResponse } from 'next/server'
-import { imageFilePath, readImage } from '@/lib/storage'
+import { imageFilePath, readImage, readImageVariant } from '@/lib/storage'
 
 /** Serves uploaded images and seed references (public:<path>). */
-export async function GET(_req: Request, { params }: { params: Promise<{ key: string[] }> }) {
+export async function GET(req: Request, { params }: { params: Promise<{ key: string[] }> }) {
   try {
     const { key } = await params
     const lookup = key.join('/')
@@ -14,6 +14,22 @@ export async function GET(_req: Request, { params }: { params: Promise<{ key: st
     if (!file) return NextResponse.json({ error: 'Not found' }, { status: 404 })
     if (!fs.statSync(file).isFile()) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    }
+
+    // ?w=... serves a compressed WebP display variant (cached on disk). SVG,
+    // animated images and generation failures fall through to the original.
+    const width = new URL(req.url).searchParams.get('w')
+    if (width) {
+      const variant = await readImageVariant(lookup, width)
+      if (variant) {
+        return new NextResponse(new Uint8Array(variant.buffer), {
+          headers: {
+            'Content-Type': variant.contentType,
+            'Cache-Control': 'public, max-age=86400',
+            'X-Content-Type-Options': 'nosniff',
+          },
+        })
+      }
     }
 
     const image = readImage(lookup)

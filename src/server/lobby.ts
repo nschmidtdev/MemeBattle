@@ -43,6 +43,12 @@ export const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 export const GHOST_TTL_MS = 30_000
 /** When every connected eligible voter has voted on a meme, the remaining time is capped to this grace. */
 export const ALL_VOTED_GRACE_MS = 5_000
+/**
+ * How long a new voting meme waits for every client to report it rendered
+ * before the countdown starts anyway. A dead or extremely slow client must not
+ * stall the lobby forever.
+ */
+export const VOTING_GATE_TIMEOUT_MS = 5_000
 /** Maximum number of template packs a lobby may select. */
 const MAX_PACK_IDS = 100
 /** Longest allowed lobby name, after whitespace normalization. */
@@ -173,6 +179,17 @@ export class Lobby {
 
   private hooks: LobbyHooks
   private timers: NodeJS.Timeout[] = []
+  /**
+   * Open voting gate: the current meme is sent but its countdown has not
+   * started. Each connected player acks `voting:ready` once their canvas
+   * rendered it, so nobody loses voting time to a slow image load.
+   */
+  private votingGate: {
+    index: number
+    pending: Set<string>
+    total: number
+    timeout: NodeJS.Timeout
+  } | null = null
   /** Guards start() against concurrent calls while templates are loading. */
   private starting = false
   /** Selected packs that are marked adult (18+); a lobby gate applies while non-empty. */
@@ -420,6 +437,8 @@ export class Lobby {
     if (p.isHost && [...this.players.values()].some((x) => x.connected)) {
       this.transferHost()
     }
+    // A disconnect must never stall an open voting gate.
+    this.releaseVotingGate(p.id)
     this.hooks.broadcast(Events.LobbyUpdate, this.fullLobbyUpdate())
   }
 
@@ -701,8 +720,10 @@ export class Lobby {
         memes: this.votingMemesFor(pl.id),
         count: this.memes.length,
         current: 0,
-        timeLeft: this.roundVoteTime,
+        // The per-meme clock starts with voting:go, once every client rendered it.
+        timeLeft: null,
         timeTotal: this.roundVoteTime,
+        held: true,
         mode: this.settings.mode,
         rule: this.roundRule,
         scoresEnabled: this.settings.mode !== 'relaxed',
@@ -723,18 +744,97 @@ export class Lobby {
 
   private showMeme(index: number) {
     this.currentMeme = index
-    this.memeSwitchAt = Date.now() + this.roundVoteTime * 1000
+    // The countdown is armed by startMemeTimer once everyone reports the meme
+    // rendered (or the gate times out): loading time never eats voting time.
+    this.memeSwitchAt = 0
     this.hooks.broadcast(Events.VotingProgress, {
       index,
       count: this.memes.length,
-      timeLeft: this.roundVoteTime,
+      timeLeft: null,
       timeTotal: this.roundVoteTime,
       canDownvote: this.roundRule !== 'noDownvotes',
+      held: true,
+    })
+    this.openVotingGate(index)
+  }
+
+  /**
+   * Hold the countdown until every connected player reports the meme rendered.
+   * If nobody can vote on it (or nobody is around), skip the wait entirely.
+   */
+  private openVotingGate(index: number) {
+    const meme = this.memes[index]
+    const eligible = [...this.players.values()].filter(
+      (pl) => pl.connected && pl.submission && pl.id !== meme?.playerId,
+    )
+    const pending = new Set(
+      [...this.players.values()].filter((pl) => pl.connected && pl.socketId).map((pl) => pl.id),
+    )
+    if (!meme || eligible.length === 0 || pending.size === 0) {
+      this.startMemeTimer(index)
+      return
+    }
+    const timeout = setTimeout(() => {
+      if (this.votingGate?.index !== index) return
+      this.startMemeTimer(index)
+    }, VOTING_GATE_TIMEOUT_MS)
+    this.votingGate = { index, pending, total: pending.size, timeout }
+    this.hooks.broadcast(Events.VotingGate, { index, ready: 0, total: pending.size })
+  }
+
+  /** Everyone is ready (or the gate timed out): reveal the meme and start the clock. */
+  private startMemeTimer(index: number) {
+    if (this.phase !== 'voting' || this.currentMeme !== index) return
+    if (this.votingGate?.index === index) {
+      clearTimeout(this.votingGate.timeout)
+      this.votingGate = null
+    }
+    this.memeSwitchAt = Date.now() + this.roundVoteTime * 1000
+    this.hooks.broadcast(Events.VotingGo, {
+      index,
+      timeLeft: this.roundVoteTime,
+      timeTotal: this.roundVoteTime,
     })
     this.schedule(() => this.advanceMeme(index), this.roundVoteTime * 1000)
-    // If nobody can vote on this meme, still show it briefly instead of waiting
-    // the full vote time.
+    // If nobody can vote on this meme, still show it briefly instead of the
+    // full vote time (same shortcut as before the gate existed).
     this.maybeShortenVoting()
+  }
+
+  /** Client ack: this player's canvas rendered the current voting meme. */
+  markVotingReady(socketId: string, index: number) {
+    const gate = this.votingGate
+    if (!gate || this.phase !== 'voting') return
+    if (!Number.isInteger(index) || index !== gate.index) return
+    const p = this.playerBySocket(socketId)
+    if (!p || !p.connected || !gate.pending.delete(p.id)) return
+    if (gate.pending.size === 0) {
+      this.startMemeTimer(gate.index)
+      return
+    }
+    this.hooks.broadcast(Events.VotingGate, {
+      index: gate.index,
+      ready: gate.total - gate.pending.size,
+      total: gate.total,
+    })
+  }
+
+  /**
+   * A player vanished while the gate was open: stop waiting for them. Called
+   * from ghost() so a disconnect can never stall the round.
+   */
+  private releaseVotingGate(playerId: string) {
+    const gate = this.votingGate
+    if (!gate || !gate.pending.delete(playerId)) return
+    if (gate.pending.size === 0) {
+      this.startMemeTimer(gate.index)
+      return
+    }
+    this.hooks.broadcast(Events.VotingGate, {
+      index: gate.index,
+      ready: gate.total - gate.pending.size,
+      total: gate.total,
+    })
   }
 
   private advanceMeme(index: number) {
@@ -1078,6 +1178,16 @@ export class Lobby {
     found.socketId = socketId
     found.connected = true
     found.disconnectedAt = null
+    // Re-entering while the gate is still open: wait for this client again.
+    const gate = this.votingGate
+    if (gate && this.phase === 'voting' && !gate.pending.has(found.id)) {
+      gate.pending.add(found.id)
+      this.hooks.broadcast(Events.VotingGate, {
+        index: gate.index,
+        ready: gate.total - gate.pending.size,
+        total: gate.total,
+      })
+    }
     return this.sendResume(socketId, found.id)
   }
 
@@ -1109,13 +1219,17 @@ export class Lobby {
       })
     } else if (this.phase === 'voting') {
       const pl = this.players.get(playerId)
+      const held = this.votingGate !== null && this.votingGate.index === this.currentMeme
       send(Events.PhaseVoting, {
         round: this.round,
         memes: this.votingMemesFor(playerId),
         count: this.memes.length,
         current: this.currentMeme,
-        timeLeft: Math.max(0, Math.ceil((this.memeSwitchAt - Date.now()) / 1000)),
+        // While the gate is open the clock has not started yet: the client
+        // reports readiness and waits for voting:go.
+        timeLeft: held ? null : Math.max(0, Math.ceil((this.memeSwitchAt - Date.now()) / 1000)),
         timeTotal: this.roundVoteTime,
+        held,
         mode: this.settings.mode,
         rule: this.roundRule,
         scoresEnabled: this.settings.mode !== 'relaxed',
@@ -1163,6 +1277,10 @@ export class Lobby {
   }
 
   clearTimers() {
+    if (this.votingGate) {
+      clearTimeout(this.votingGate.timeout)
+      this.votingGate = null
+    }
     for (const t of this.timers) clearTimeout(t)
     this.timers = []
   }

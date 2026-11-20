@@ -2,6 +2,7 @@ import fs from 'fs'
 import path from 'path'
 import crypto from 'crypto'
 import { config } from './config'
+import { snapImageWidth } from './images'
 
 /** Maximum accepted upload size (10 MB). */
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024
@@ -131,5 +132,54 @@ export function deleteImage(key: string): void {
     if (fs.statSync(file).isFile()) fs.unlinkSync(file)
   } catch {
     // Missing file / permissions: nothing useful to do here.
+  }
+}
+
+/**
+ * Display variants are generated lazily by the image route. They live in a
+ * hidden subfolder of the upload volume (never in the repo) and are keyed by
+ * source key + width, so they are immutable until the source changes.
+ */
+function variantFilePath(key: string, width: number): string {
+  const hash = crypto.createHash('sha256').update(`${key}@${width}`).digest('hex').slice(0, 32)
+  return path.join(config.uploadDir, '.variants', `${hash}.webp`)
+}
+
+/** True for static raster formats we can safely re-encode. */
+function canResizeImage(key: string): boolean {
+  const ext = path.extname(key).toLowerCase()
+  return ext === '.png' || ext === '.jpg' || ext === '.jpeg' || ext === '.webp'
+}
+
+/**
+ * Read or lazily generate a compressed WebP display variant capped to the
+ * requested (bucketed) size. Returns null for SVG, animated images and any
+ * failure: the caller then serves the original file unchanged.
+ */
+export async function readImageVariant(key: string, width: unknown): Promise<StoredImage | null> {
+  const snapped = snapImageWidth(width)
+  if (!snapped || !canResizeImage(key)) return null
+  const source = imageFilePath(key)
+  if (!source) return null
+
+  const file = variantFilePath(key, snapped)
+  try {
+    if (fs.existsSync(file)) return { buffer: fs.readFileSync(file), contentType: 'image/webp' }
+
+    const sharp = (await import('sharp')).default
+    const meta = await sharp(source, { limitInputPixels: 50_000_000 }).metadata()
+    // Animated images (GIF/WebP) must keep their frames: serve the original.
+    if (!meta.width || !meta.height || (meta.pages ?? 1) > 1) return null
+
+    const buffer = await sharp(source, { limitInputPixels: 50_000_000 })
+      .rotate() // honor EXIF orientation before stripping metadata
+      .resize({ width: snapped, height: snapped, fit: 'inside', withoutEnlargement: true })
+      .webp({ quality: 82, effort: 4 })
+      .toBuffer()
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.writeFileSync(file, buffer)
+    return { buffer, contentType: 'image/webp' }
+  } catch {
+    return null
   }
 }

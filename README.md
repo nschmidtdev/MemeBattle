@@ -66,10 +66,28 @@ meme-maker wins. No accounts, no filters, no mercy.
   current draft is submitted automatically, even if it is empty: nobody silently
   becomes a spectator. Hosts can turn it off in the lobby to allow spectators
   again.
+- **Fair voting clock** — each meme is held behind a short "Preparing meme…"
+  screen and its countdown only starts once every connected player confirms the
+  image is rendered. Slow connections never eat into someone's voting time.
+- **Small images on the wire** — the image route serves cached, compressed WebP
+  variants at the size the UI actually renders (up to 10 MB originals stay
+  untouched for downloads); SVG and animated GIFs are served as-is.
 - **Böse memes allowed** — there is intentionally no profanity filter and no
   auto-moderation. What you caption is what the room gets.
 - **Self-hosted & private** — Docker Compose or one all-in-one container with
   bundled PostgreSQL; no external services, no telemetry, no ads.
+
+## Screenshots
+
+| Create a lobby | Lobby & settings |
+| --- | --- |
+| ![Start page: username, game mode and template packs](docs/screenshots/start.png) | ![Lobby: players, game mode and host settings](docs/screenshots/lobby.png) |
+
+| Caption editor | Voting |
+| --- | --- |
+| ![Caption editor: freely placed texts on the template](docs/screenshots/caption.png) | ![Voting: anonymous memes with Fun, Meh and Cringe votes](docs/screenshots/voting.png) |
+
+![Round results: gallery with scores and Meme Buddy picks](docs/screenshots/results.png)
 
 ## Quick start (Docker)
 
