@@ -65,6 +65,8 @@ export default function LobbyRoom({ code }: { code: string }) {
   const myIdRef = useRef<string | null>(null)
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const errorNonceRef = useRef(0)
+  /** Current meme index, so a shortened-timer update cannot hit the wrong meme. */
+  const currentMemeRef = useRef<number | null>(null)
 
   const [state, setState] = useState<LobbyState | null>(null)
   const [myId, setMyId] = useState<string | null>(null)
@@ -224,6 +226,7 @@ export default function LobbyRoom({ code }: { code: string }) {
         // Resume payloads carry the player's own pick; older payloads omit it.
         buddyIndex: typeof buddyIndex === 'number' ? buddyIndex : null,
       })
+      currentMemeRef.current = current
       setCaption(null)
       setRoundResult(null)
       setGameOver(null)
@@ -233,9 +236,15 @@ export default function LobbyRoom({ code }: { code: string }) {
     }
 
     const onVotingProgress = ({ index, timeLeft }: { index: number; timeLeft: number }) => {
+      currentMemeRef.current = index
       setVoting((prev) => (prev ? { ...prev, current: index } : prev))
       startTimer(timeLeft)
       sounds.memeShown()
+    }
+
+    const onVotingTimer = ({ index, timeLeft }: { index: number; timeLeft: number }) => {
+      // Everyone eligible voted: the server capped the remaining time.
+      if (currentMemeRef.current === index) startTimer(timeLeft)
     }
 
     const onBuddyPicked = ({ index }: { index: number }) => {
@@ -269,6 +278,7 @@ export default function LobbyRoom({ code }: { code: string }) {
     socket.on(Events.CaptionTemplate, onCaptionTemplate)
     socket.on(Events.PhaseVoting, onPhaseVoting)
     socket.on(Events.VotingProgress, onVotingProgress)
+    socket.on(Events.VotingTimer, onVotingTimer)
     socket.on(Events.BuddyPicked, onBuddyPicked)
     socket.on(Events.RoundResults, onRoundResults)
     socket.on(Events.GameOver, onGameOver)
@@ -301,6 +311,7 @@ export default function LobbyRoom({ code }: { code: string }) {
       socket.off(Events.CaptionTemplate, onCaptionTemplate)
       socket.off(Events.PhaseVoting, onPhaseVoting)
       socket.off(Events.VotingProgress, onVotingProgress)
+      socket.off(Events.VotingTimer, onVotingTimer)
       socket.off(Events.BuddyPicked, onBuddyPicked)
       socket.off(Events.RoundResults, onRoundResults)
       socket.off(Events.GameOver, onGameOver)

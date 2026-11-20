@@ -1,9 +1,11 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import type { CaptionSubmission, FreeformLine, TemplateData } from '@/lib/types'
+import type { CaptionSubmission, FreeformLine, MemePadding, TemplateData } from '@/lib/types'
 import { clampFreeformLine } from '@/lib/meme'
 import FreeformEditor from './FreeformEditor'
+
+const NO_PADDING: MemePadding = { top: false, bottom: false }
 
 interface Props {
   template: TemplateData | null
@@ -52,6 +54,7 @@ export default function CaptionView({
   submission,
 }: Props) {
   const [lines, setLines] = useState<FreeformLine[]>([])
+  const [padding, setPadding] = useState<MemePadding>(NO_PADDING)
   const [localSubmitted, setLocalSubmitted] = useState(false)
   const [rerollPending, setRerollPending] = useState(false)
   const linesRef = useRef(lines)
@@ -61,6 +64,8 @@ export default function CaptionView({
   const templateKey = template ? `${template.id}|${template.imageKey}` : null
   const lastTemplateKey = useRef<string | null>(null)
   const submissionLines = submission?.lines ?? null
+  const submissionPadTop = submission?.padding?.top === true
+  const submissionPadBottom = submission?.padding?.bottom === true
 
   // Prefill from the template's boxes. A real template change (reroll) only
   // replaces the lines when the player has not written any text yet; otherwise
@@ -85,10 +90,13 @@ export default function CaptionView({
   }, [template, templateKey, isSubmitted])
 
   // Resume after a refresh/reconnect: restore exactly what was submitted.
+  // While the local submit is still in flight (`submission` is null) keep the
+  // editor state as-is so the just-chosen padding does not disappear.
   useEffect(() => {
-    if (!isSubmitted || !submissionLines) return
-    setLines(submissionLines.map(clampFreeformLine))
-  }, [isSubmitted, submissionLines, templateKey])
+    if (!isSubmitted || !submission) return
+    if (submissionLines) setLines(submissionLines.map(clampFreeformLine))
+    setPadding({ top: submissionPadTop, bottom: submissionPadBottom })
+  }, [isSubmitted, submission, submissionLines, submissionPadTop, submissionPadBottom, templateKey])
 
   // A new template arrived (reroll) -> the button may be used again.
   useEffect(() => {
@@ -119,7 +127,8 @@ export default function CaptionView({
   const submit = () => {
     if (isSubmitted || rerollPending || !hasText) return
     const cleaned = lines.filter((l) => l.text.trim() !== '').map(clampFreeformLine)
-    onSubmit({ texts: {}, lines: cleaned })
+    const activePadding = padding.top || padding.bottom ? { top: padding.top, bottom: padding.bottom } : undefined
+    onSubmit(activePadding ? { texts: {}, lines: cleaned, padding: activePadding } : { texts: {}, lines: cleaned })
     setLocalSubmitted(true)
   }
 
@@ -168,7 +177,14 @@ export default function CaptionView({
           </div>
         )}
 
-        <FreeformEditor template={template} lines={lines} setLines={setLines} disabled={isSubmitted} />
+        <FreeformEditor
+          template={template}
+          lines={lines}
+          setLines={setLines}
+          disabled={isSubmitted}
+          padding={padding}
+          onPaddingChange={setPadding}
+        />
 
         <div className="mt-4 border-t border-line pt-4">
           <button

@@ -21,6 +21,11 @@ meme-maker wins. No accounts, no filters, no mercy.
 - **Custom memes** — admins can create packs and upload template images. Players
   edit every meme in a WYSIWYG editor: pre-placed text boxes are just starting
   positions — move, restyle, delete and add as many texts as you like.
+- **White text boxes** — any text line can get an opaque white background (very
+  light text automatically switches to dark) so captions stay readable on busy
+  templates.
+- **Optional top/bottom whitespace** — add white bars above, below or around the
+  template image, giving captions extra room without changing the image itself.
 - **Content-only admin panel** — manage packs and templates via `/admin`. No user
   management, no reporting, no moderation.
 - **Böse memes allowed** — there is intentionally no profanity filter and no

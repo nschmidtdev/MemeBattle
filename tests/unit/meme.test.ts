@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { buildTextItems, downloadTargetSize } from '../../src/lib/meme'
+import {
+  MEME_PAD_RATIO,
+  buildTextItems,
+  downloadTargetSize,
+  isLightTextColor,
+  memeCanvasLayout,
+  normalizeMemePadding,
+} from '../../src/lib/meme'
 import type { CaptionSubmission, FreeformLine, TemplateBox, TemplateData } from '../../src/lib/types'
 
 function box(overrides: Partial<TemplateBox> = {}): TemplateBox {
@@ -66,6 +73,88 @@ describe('downloadTargetSize', () => {
 
   it('caps very large images at 4096 px to keep the PNG allocation bounded', () => {
     expect(downloadTargetSize(6000, 8000)).toBe(4096)
+  })
+})
+
+describe('memeCanvasLayout', () => {
+  it('keeps the exact old image sizing when no padding is active', () => {
+    expect(memeCanvasLayout(800, 600, 640, undefined, true)).toMatchObject({
+      imageWidth: 640,
+      imageHeight: 480,
+      padTop: 0,
+      padBottom: 0,
+      width: 640,
+      height: 480,
+    })
+    expect(memeCanvasLayout(400, 300, 640, { top: false, bottom: false }, false)).toMatchObject({
+      imageWidth: 400,
+      imageHeight: 300,
+      padTop: 0,
+      padBottom: 0,
+      width: 400,
+      height: 300,
+    })
+  })
+
+  it('adds one MEME_PAD_RATIO bar per active side, based on the image height', () => {
+    const both = memeCanvasLayout(400, 300, 1000, { top: true, bottom: true }, false)
+
+    expect(both).toMatchObject({
+      imageWidth: 400,
+      imageHeight: 300,
+      padTop: Math.round(300 * MEME_PAD_RATIO),
+      padBottom: Math.round(300 * MEME_PAD_RATIO),
+      width: 400,
+      height: 420,
+    })
+
+    const topOnly = memeCanvasLayout(400, 300, 1000, { top: true, bottom: false }, false)
+    expect(topOnly.padTop).toBe(60)
+    expect(topOnly.padBottom).toBe(0)
+    expect(topOnly.height).toBe(360)
+  })
+
+  it('scales the image so image + bars stay inside the maxDim budget', () => {
+    const layout = memeCanvasLayout(1000, 1000, 640, { top: true, bottom: true }, true)
+
+    expect(Math.max(layout.width, layout.height)).toBeLessThanOrEqual(640)
+    expect(layout.height).toBe(layout.imageHeight + layout.padTop + layout.padBottom)
+    expect(layout.imageWidth).toBe(layout.imageHeight)
+
+    // Rounding the bars independently must not leak past the budget either.
+    const large = memeCanvasLayout(1000, 1000, 2048, { top: true, bottom: true }, true)
+    expect(Math.max(large.width, large.height)).toBeLessThanOrEqual(2048)
+  })
+
+  it('does not upscale raster images just because bars were added', () => {
+    const layout = memeCanvasLayout(200, 100, 640, { top: true, bottom: true }, false)
+
+    expect(layout.scale).toBe(1)
+    expect(layout.width).toBe(200)
+    expect(layout.height).toBe(140)
+  })
+})
+
+describe('normalizeMemePadding', () => {
+  it('keeps explicit booleans and drops inactive or malformed padding', () => {
+    expect(normalizeMemePadding({ top: true, bottom: false })).toEqual({ top: true, bottom: false })
+    expect(normalizeMemePadding({ top: true, bottom: true })).toEqual({ top: true, bottom: true })
+    expect(normalizeMemePadding({ top: 'yes', bottom: 1 })).toBeUndefined()
+    expect(normalizeMemePadding({ top: false, bottom: false })).toBeUndefined()
+    expect(normalizeMemePadding(null)).toBeUndefined()
+    expect(normalizeMemePadding(undefined)).toBeUndefined()
+  })
+})
+
+describe('isLightTextColor', () => {
+  it('detects white and very light colours, but leaves dark colours alone', () => {
+    expect(isLightTextColor('#ffffff')).toBe(true)
+    expect(isLightTextColor('#fff')).toBe(true)
+    expect(isLightTextColor('white')).toBe(true)
+    expect(isLightTextColor('#ffff00')).toBe(true)
+    expect(isLightTextColor('#111111')).toBe(false)
+    expect(isLightTextColor('#ff0000')).toBe(false)
+    expect(isLightTextColor('not-a-colour')).toBe(false)
   })
 })
 
@@ -217,5 +306,27 @@ describe('buildTextItems', () => {
     const [item] = buildTextItems(template({ isFreeform: true }), sub)
 
     expect(item).toMatchObject({ color: '#ff0000', stroke: '#00ff00', font: 'Verdana', align: 'left' })
+  })
+
+  it('passes whiteBackground through for freeform lines', () => {
+    const sub = submission({
+      lines: [
+        line({ id: 'white', text: 'white box', whiteBackground: true }),
+        line({ id: 'plain', text: 'no box', whiteBackground: false }),
+        line({ id: 'old', text: 'legacy line' }),
+      ],
+    })
+
+    const items = buildTextItems(template({ isFreeform: true }), sub)
+
+    expect(items.map((i) => i.whiteBackground)).toEqual([true, false, false])
+  })
+
+  it('defaults whiteBackground to false for legacy template boxes', () => {
+    const tpl = template({ boxes: [box({ id: 'legacy', defaultText: 'legacy text' })] })
+
+    const [item] = buildTextItems(tpl, submission())
+
+    expect(item.whiteBackground).toBe(false)
   })
 })

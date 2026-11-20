@@ -24,6 +24,7 @@ import {
   ROTATION_BOUNDS,
   TEXT_WIDTH_BOUNDS,
 } from '../lib/types'
+import { normalizeMemePadding } from '../lib/meme'
 import { MEME_BUDDY_POINTS, computeBuddyOutcome, computeScore } from '../lib/scoring'
 import type { BuddyPickInput } from '../lib/scoring'
 import { loadTemplates } from './templates'
@@ -32,6 +33,8 @@ export const MAX_PLAYERS = 30
 export const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 /** Ghosted players (disconnected) are kept this long so a brief reconnect or page navigation can resume them. */
 export const GHOST_TTL_MS = 30_000
+/** When every connected eligible voter has voted on a meme, the remaining time is capped to this grace. */
+export const ALL_VOTED_GRACE_MS = 5_000
 /** Maximum number of template packs a lobby may select. */
 const MAX_PACK_IDS = 10
 /** Longest allowed lobby name, after whitespace normalization. */
@@ -547,15 +550,47 @@ export class Lobby {
       count: this.memes.length,
       timeLeft: this.settings.voteTime,
     })
-    this.schedule(() => {
-      if (this.currentMeme === index) {
-        if (index + 1 < this.memes.length) {
-          this.showMeme(index + 1)
-        } else {
-          this.endVoting()
-        }
-      }
-    }, this.settings.voteTime * 1000)
+    this.schedule(() => this.advanceMeme(index), this.settings.voteTime * 1000)
+    // If nobody can vote on this meme, still show it briefly instead of waiting
+    // the full vote time.
+    this.maybeShortenVoting()
+  }
+
+  private advanceMeme(index: number) {
+    if (this.currentMeme !== index) return
+    if (index + 1 < this.memes.length) {
+      this.showMeme(index + 1)
+    } else {
+      this.endVoting()
+    }
+  }
+
+  /**
+   * Everyone who can vote on the current meme has voted: cap the remaining
+   * time at ALL_VOTED_GRACE_MS. This never extends the timer and is a no-op
+   * once the cap has already been applied.
+   */
+  private maybeShortenVoting() {
+    if (this.phase !== 'voting') return
+    const index = this.currentMeme
+    const meme = this.memes[index]
+    if (!meme) return
+
+    const eligible = [...this.players.values()].filter(
+      (pl) => pl.connected && pl.submission && pl.id !== meme.playerId,
+    )
+    if (!eligible.every((pl) => pl.votes[index] !== undefined)) return
+
+    const now = Date.now()
+    const target = Math.min(this.memeSwitchAt, now + ALL_VOTED_GRACE_MS)
+    if (target >= this.memeSwitchAt) return
+
+    this.memeSwitchAt = target
+    this.hooks.broadcast(Events.VotingTimer, {
+      index,
+      timeLeft: Math.max(0, Math.ceil((target - now) / 1000)),
+    })
+    this.schedule(() => this.advanceMeme(index), Math.max(0, target - now))
   }
 
   private endVoting() {
@@ -758,12 +793,14 @@ export class Lobby {
           font: typeof b.font === 'string' ? b.font.slice(0, 40) : 'Impact',
           align: b.align === 'left' || b.align === 'right' ? b.align : 'center',
           rotation: clampNum(b.rotation, ROTATION_BOUNDS.min, ROTATION_BOUNDS.max),
+          whiteBackground: b.whiteBackground === true,
         }))
     }
     const hasAny =
       Object.values(texts).some((t) => t.trim() !== '') || lines.some((l) => l.text.trim() !== '')
     if (!hasAny) return 'Add at least one text before submitting.'
-    p.submission = { texts, lines }
+    const padding = normalizeMemePadding(submission?.padding)
+    p.submission = padding ? { texts, lines, padding } : { texts, lines }
     // Everyone in -> move on early (brief grace so clients see "submitted").
     if ([...this.players.values()].every((pl) => pl.submission)) {
       this.schedule(() => this.beginVoting(), 1000)
@@ -791,6 +828,7 @@ export class Lobby {
     }
     p.votes[index] = value
     // No live tally broadcast: how people vote stays hidden until the results.
+    this.maybeShortenVoting()
     return null
   }
 

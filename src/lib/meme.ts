@@ -3,14 +3,62 @@
 // from data, which keeps storage at zero and makes downloads trivial.
 
 import { LINE_BOUNDS, ROTATION_BOUNDS, TEXT_WIDTH_BOUNDS } from './types'
-import type { CaptionSubmission, FreeformLine, RenderTextItem, TemplateBox, TemplateData } from './types'
+import type {
+  CaptionSubmission,
+  FreeformLine,
+  MemePadding,
+  RenderTextItem,
+  TemplateBox,
+  TemplateData,
+} from './types'
 import { imageUrl } from './images'
+
+/** White bar height per active side, relative to the template image height. */
+export const MEME_PAD_RATIO = 0.2
+
+/** Vertical breathing room inside an optional white text box, relative to the font size. */
+export const MEME_TEXT_BOX_PAD_RATIO = 0.15
 
 /** Clamp a numeric value the same way the server validates submissions. */
 export function clampMemeValue(value: number, min: number, max: number): number {
   const n = Number(value)
   if (!Number.isFinite(n)) return min
   return Math.min(max, Math.max(min, n))
+}
+
+/**
+ * Only an explicit `true` activates a padding bar. Anything else (missing,
+ * strings, numbers, both false) collapses to `undefined`, so legacy
+ * submissions and old clients keep rendering exactly as before.
+ */
+export function normalizeMemePadding(value: unknown): MemePadding | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const raw = value as { top?: unknown; bottom?: unknown }
+  const top = raw.top === true
+  const bottom = raw.bottom === true
+  if (!top && !bottom) return undefined
+  return { top, bottom }
+}
+
+/**
+ * Detect very light text colours (white, near-white, light yellow…). Used by
+ * the editor to flip to dark text when a white text box is switched on.
+ */
+export function isLightTextColor(color: string): boolean {
+  const value = (color || '').trim().toLowerCase()
+  if (value === 'white') return true
+  let hex: string | null = null
+  if (/^#[0-9a-f]{3}$/.test(value)) {
+    hex = value.slice(1).split('').map((c) => c + c).join('')
+  } else if (/^#[0-9a-f]{6}([0-9a-f]{2})?$/.test(value)) {
+    hex = value.slice(1, 7)
+  }
+  if (!hex) return false
+  const r = parseInt(hex.slice(0, 2), 16) / 255
+  const g = parseInt(hex.slice(2, 4), 16) / 255
+  const b = parseInt(hex.slice(4, 6), 16) / 255
+  // Perceived brightness (BT.601), close enough for "very light".
+  return 0.299 * r + 0.587 * g + 0.114 * b >= 0.8
 }
 
 /**
@@ -104,6 +152,7 @@ function toRenderItem(box: TemplateBox | FreeformLine, text: string): RenderText
     font: box.font,
     align: box.align,
     rotation: clampMemeValue(box.rotation, ROTATION_BOUNDS.min, ROTATION_BOUNDS.max),
+    whiteBackground: 'whiteBackground' in box ? box.whiteBackground === true : false,
   }
 }
 
@@ -111,6 +160,69 @@ export interface RenderedMeme {
   width: number
   height: number
   canvas: HTMLCanvasElement
+}
+
+/** Final canvas geometry for a template image plus optional white bars. */
+export interface MemeCanvasLayout {
+  /** Scale used to size the source image before pixel rounding. */
+  scale: number
+  imageWidth: number
+  imageHeight: number
+  padTop: number
+  padBottom: number
+  /** Total canvas size (image + bars). */
+  width: number
+  height: number
+}
+
+/**
+ * Size the final canvas before anything is drawn.
+ *
+ * Each active bar is `MEME_PAD_RATIO` of the rendered image height. The whole
+ * canvas (image + bars) must stay inside the `maxDim` budget, so the image is
+ * scaled down accordingly and keeps its aspect ratio. Without padding this is
+ * exactly the old image sizing.
+ */
+export function memeCanvasLayout(
+  naturalWidth: number,
+  naturalHeight: number,
+  maxDim: number,
+  padding?: MemePadding | null,
+  allowUpscale = false,
+): MemeCanvasLayout {
+  const iw = Math.max(1, Number(naturalWidth) || 1)
+  const ih = Math.max(1, Number(naturalHeight) || 1)
+  const top = padding?.top === true
+  const bottom = padding?.bottom === true
+  const paddedHeight = ih * (1 + (top ? MEME_PAD_RATIO : 0) + (bottom ? MEME_PAD_RATIO : 0))
+  const longest = Math.max(iw, paddedHeight)
+  const target = Math.max(1, maxDim)
+  const scale = allowUpscale ? target / longest : Math.min(1, target / longest)
+  let imageWidth = Math.max(1, Math.round(iw * scale))
+  let imageHeight = Math.max(1, Math.round(ih * scale))
+  let padTop = top ? Math.max(1, Math.round(imageHeight * MEME_PAD_RATIO)) : 0
+  let padBottom = bottom ? Math.max(1, Math.round(imageHeight * MEME_PAD_RATIO)) : 0
+
+  // Rounding the bars independently can exceed the budget by a pixel or two.
+  // Trim the image (keeping its aspect ratio) until image + bars fit exactly.
+  const overflow = imageHeight + padTop + padBottom - target
+  if (overflow > 0) {
+    const nextHeight = Math.max(1, imageHeight - overflow)
+    imageWidth = Math.max(1, Math.round(imageWidth * (nextHeight / imageHeight)))
+    imageHeight = nextHeight
+    padTop = top ? Math.max(1, Math.round(imageHeight * MEME_PAD_RATIO)) : 0
+    padBottom = bottom ? Math.max(1, Math.round(imageHeight * MEME_PAD_RATIO)) : 0
+  }
+
+  return {
+    scale,
+    imageWidth,
+    imageHeight,
+    padTop,
+    padBottom,
+    width: imageWidth,
+    height: imageHeight + padTop + padBottom,
+  }
 }
 
 function isVectorSource(url: string): boolean {
@@ -142,11 +254,10 @@ export function renderMeme(
     ih = 600
   }
 
-  const longest = Math.max(iw, ih)
-  const target = Math.max(1, maxDim)
-  const scale = vector ? target / longest : Math.min(1, target / longest)
-  const W = Math.max(1, Math.round(iw * scale))
-  const H = Math.max(1, Math.round(ih * scale))
+  const padding = normalizeMemePadding(submission.padding)
+  const layout = memeCanvasLayout(iw, ih, maxDim, padding, vector)
+  const W = layout.width
+  const H = layout.height
 
   const canvas = document.createElement('canvas')
   canvas.width = W
@@ -154,10 +265,19 @@ export function renderMeme(
   const ctx = canvas.getContext('2d')
   if (!ctx) return canvas
 
+  // Opaque white bars only; the template area itself keeps its own pixels.
+  if (layout.padTop > 0 || layout.padBottom > 0) {
+    ctx.fillStyle = '#ffffff'
+    if (layout.padTop > 0) ctx.fillRect(0, 0, W, layout.padTop)
+    if (layout.padBottom > 0) ctx.fillRect(0, layout.padTop + layout.imageHeight, W, layout.padBottom)
+  }
+
   ctx.imageSmoothingEnabled = true
   ctx.imageSmoothingQuality = 'high'
-  ctx.drawImage(image, 0, 0, W, H)
+  ctx.drawImage(image, 0, layout.padTop, layout.imageWidth, layout.imageHeight)
 
+  // Text coordinates and font sizes are relative to the whole canvas,
+  // including the bars, matching the editor stage.
   for (const item of buildTextItems(template, submission)) {
     drawTextItem(ctx, item, W, H)
   }
@@ -189,6 +309,16 @@ function drawTextItem(ctx: CanvasRenderingContext2D, item: RenderTextItem, W: nu
   ctx.fillStyle = item.color
 
   const x = item.align === 'left' ? -maxWidth / 2 : item.align === 'right' ? maxWidth / 2 : 0
+
+  // Opaque white block behind all lines, spanning the full block width. Drawn
+  // in the rotated coordinate system, so align and rotation match the editor.
+  if (item.whiteBackground) {
+    const padY = fontSize * MEME_TEXT_BOX_PAD_RATIO
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(-maxWidth / 2, -totalHeight / 2 - padY, maxWidth, totalHeight + padY * 2)
+    ctx.fillStyle = item.color
+  }
+
   for (let i = 0; i < lines.length; i++) {
     const y = -totalHeight / 2 + lineHeight / 2 + i * lineHeight
     ctx.strokeText(lines[i], x, y)

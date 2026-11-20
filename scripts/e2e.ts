@@ -481,6 +481,11 @@ async function runSuite() {
 
   const votesCast: Record<string, boolean> = { a: false, b: false }
 
+  // Everyone eligible (the single non-author in this 2-player game) is about to
+  // vote; the server must cap the remaining time at 5s instead of waiting the
+  // full voteTime.
+  const timer0P = waitEvent<any>(A, 'voting:timer', 10000)
+
   // Meme 0: only its non-owner can vote; upvotes from both sides create a tie.
   // The same non-owner is also the Meme Buddy picker for this meme.
   const picker0 = ownOfA === 0 ? B : A
@@ -495,6 +500,13 @@ async function runSuite() {
     A.emit('vote:cast', { index: 0, value: 'up' })
     votesCast.a = true
   }
+
+  const timer0 = await timer0P
+  ok(
+    'voting timer capped to 5s after all eligible votes',
+    timer0?.index === 0 && typeof timer0?.timeLeft === 'number' && timer0.timeLeft <= 5,
+    timer0,
+  )
 
   // Wrong-index vote must fail (meme 1 is not current yet).
   const wErr = waitEvent<any>(A, 'client:error', 5000)

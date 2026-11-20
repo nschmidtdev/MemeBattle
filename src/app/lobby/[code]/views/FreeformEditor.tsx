@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import type { FreeformLine, TextAlign, TemplateData } from '@/lib/types'
+import type { FreeformLine, MemePadding, TextAlign, TemplateData } from '@/lib/types'
 import {
   FONT_OPTIONS,
   LINE_BOUNDS,
@@ -11,7 +11,14 @@ import {
   TEXT_WIDTH_BOUNDS,
 } from '@/lib/types'
 import { imageUrl } from '@/lib/images'
-import { clampFreeformLine, memeFontFamily, memeFontWeight } from '@/lib/meme'
+import {
+  MEME_PAD_RATIO,
+  MEME_TEXT_BOX_PAD_RATIO,
+  clampFreeformLine,
+  isLightTextColor,
+  memeFontFamily,
+  memeFontWeight,
+} from '@/lib/meme'
 import { randomId } from '@/lib/client'
 
 interface Props {
@@ -19,7 +26,16 @@ interface Props {
   lines: FreeformLine[]
   setLines: (lines: FreeformLine[]) => void
   disabled?: boolean
+  padding: MemePadding
+  onPaddingChange: (padding: MemePadding) => void
 }
+
+const PADDING_OPTIONS: Array<{ label: string; top: boolean; bottom: boolean }> = [
+  { label: 'None', top: false, bottom: false },
+  { label: 'Top', top: true, bottom: false },
+  { label: 'Bottom', top: false, bottom: true },
+  { label: 'Both', top: true, bottom: true },
+]
 
 const NEW_LINE: Omit<FreeformLine, 'id'> = {
   text: '',
@@ -41,14 +57,31 @@ const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(mi
  * (same font stack, weight, wrapping and line height the canvas render uses)
  * and can be dragged, styled, added and removed freely.
  */
-export default function FreeformEditor({ template, lines, setLines, disabled = false }: Props) {
+export default function FreeformEditor({
+  template,
+  lines,
+  setLines,
+  disabled = false,
+  padding,
+  onPaddingChange,
+}: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [lastDeleted, setLastDeleted] = useState<{ line: FreeformLine; index: number } | null>(null)
   const stageRef = useRef<HTMLDivElement | null>(null)
   const dragRef = useRef<{ id: string; dx: number; dy: number } | null>(null)
   const [stageH, setStageH] = useState(320)
+  const [imageSize, setImageSize] = useState<{ key: string; width: number; height: number } | null>(null)
 
-  // font size is relative to the image height -> track the rendered stage height
+  // Natural image size drives the stage aspect ratio (bar heights are relative
+  // to the image height). Fallback 4:3 until the image has loaded.
+  const natural = imageSize && imageSize.key === template.imageKey ? imageSize : null
+  const imageW = natural?.width ?? 4
+  const imageH = natural?.height ?? 3
+  const padTopRatio = padding.top ? MEME_PAD_RATIO : 0
+  const padBottomRatio = padding.bottom ? MEME_PAD_RATIO : 0
+  const totalRatio = 1 + padTopRatio + padBottomRatio
+
+  // Font size is relative to the full canvas height (image + bars) -> track the stage height.
   useEffect(() => {
     const el = stageRef.current
     if (!el) return
@@ -74,6 +107,24 @@ export default function FreeformEditor({ template, lines, setLines, disabled = f
 
   const update = (id: string, patch: Partial<FreeformLine>) =>
     setLines(lines.map((l) => (l.id === id ? clampFreeformLine({ ...l, ...patch }) : l)))
+
+  // Switching the white box on must keep the text readable: very light text
+  // flips to dark. Switching it off leaves the colour untouched.
+  const setWhiteBackground = (line: FreeformLine, enabled: boolean) => {
+    const patch: Partial<FreeformLine> = { whiteBackground: enabled }
+    if (enabled && isLightTextColor(line.color)) patch.color = '#111111'
+    update(line.id, patch)
+  }
+
+  const onImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    const img = e.currentTarget
+    const ok = img.naturalWidth > 0 && img.naturalHeight > 0
+    setImageSize({
+      key: template.imageKey,
+      width: ok ? img.naturalWidth : 4,
+      height: ok ? img.naturalHeight : 3,
+    })
+  }
 
   // Arrow keys nudge the selected line even when focus is on a toolbar button
   // (text inputs/selects keep their normal arrow-key behaviour).
@@ -212,11 +263,36 @@ export default function FreeformEditor({ template, lines, setLines, disabled = f
 
   return (
     <div>
+      {/* ------------------------------------------------------ whitespace */}
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <span className="text-xs font-semibold text-dim">Canvas whitespace</span>
+        <div className="flex overflow-hidden rounded-lg border border-line" role="group" aria-label="Canvas whitespace">
+          {PADDING_OPTIONS.map((opt) => {
+            const active = padding.top === opt.top && padding.bottom === opt.bottom
+            return (
+              <button
+                key={opt.label}
+                type="button"
+                className={`min-h-11 px-3 text-xs ${active ? 'bg-punch font-bold text-night' : 'bg-card2 text-dim'} disabled:cursor-default disabled:opacity-40`}
+                aria-pressed={active}
+                disabled={disabled}
+                onClick={() => onPaddingChange({ top: opt.top, bottom: opt.bottom })}
+              >
+                {opt.label}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
       {/* ---------------------------------------------------------- stage */}
       <div
         ref={stageRef}
         className="relative mx-auto w-full max-w-xl select-none overflow-hidden rounded-2xl border border-line bg-black shadow-2xl"
-        style={{ cursor: disabled ? 'default' : 'crosshair' }}
+        style={{
+          aspectRatio: `${imageW} / ${imageH * totalRatio}`,
+          cursor: disabled ? 'default' : 'crosshair',
+        }}
         onPointerDown={() => {
           if (!disabled) setSelectedId(null)
         }}
@@ -224,11 +300,33 @@ export default function FreeformEditor({ template, lines, setLines, disabled = f
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
       >
+        {padTopRatio > 0 && (
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-x-0 top-0 bg-white"
+            style={{ height: `${(padTopRatio / totalRatio) * 100}%` }}
+          />
+        )}
+        {padBottomRatio > 0 && (
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-x-0 bottom-0 bg-white"
+            style={{ height: `${(padBottomRatio / totalRatio) * 100}%` }}
+          />
+        )}
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={imageUrl(template.imageKey)} alt={template.name} className="pointer-events-none block w-full" draggable={false} />
+        <img
+          src={imageUrl(template.imageKey)}
+          alt={template.name}
+          className="pointer-events-none absolute left-0 w-full"
+          style={{ top: `${(padTopRatio / totalRatio) * 100}%`, height: `${(1 / totalRatio) * 100}%` }}
+          draggable={false}
+          onLoad={onImageLoad}
+        />
         {lines.map((l) => {
           const fs = Math.max(4, l.fontSize * stageH)
           const selected = selectedId === l.id
+          const showWhite = l.whiteBackground === true && l.text.trim() !== ''
           return (
             <div
               key={l.id}
@@ -252,13 +350,17 @@ export default function FreeformEditor({ template, lines, setLines, disabled = f
                 fontWeight: memeFontWeight(l.font),
                 lineHeight: 1.05,
                 color: l.color,
+                backgroundColor: showWhite ? '#ffffff' : undefined,
+                paddingTop: showWhite ? fs * MEME_TEXT_BOX_PAD_RATIO : 0,
+                paddingBottom: showWhite ? fs * MEME_TEXT_BOX_PAD_RATIO : 0,
+                paddingLeft: 0,
+                paddingRight: 0,
                 WebkitTextStroke: `${Math.max(1, fs * 0.09)}px ${l.stroke}`,
                 paintOrder: 'stroke fill',
                 textAlign: l.align,
                 whiteSpace: 'pre-line',
                 overflowWrap: 'anywhere',
                 wordBreak: 'break-word',
-                padding: 0,
                 cursor: disabled ? 'default' : 'move',
                 pointerEvents: disabled ? 'none' : 'auto',
                 outline: selected ? '2px dashed rgba(76, 201, 240, 0.95)' : 'none',
@@ -418,6 +520,15 @@ export default function FreeformEditor({ template, lines, setLines, disabled = f
                       ))}
                     </span>
                   </div>
+                  <label className={labelCls}>
+                    <input
+                      type="checkbox"
+                      className="h-5 w-5 flex-none accent-punch"
+                      checked={l.whiteBackground === true}
+                      onChange={(e) => setWhiteBackground(l, e.target.checked)}
+                    />
+                    White text box
+                  </label>
                   <div className="flex min-h-11 items-center gap-4 text-xs text-dim">
                     <label className="flex min-h-11 items-center gap-1">
                       Color

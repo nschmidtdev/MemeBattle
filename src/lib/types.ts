@@ -79,6 +79,8 @@ export interface FreeformLine {
   align: TextAlign
   /** Degrees, 0 = upright */
   rotation: number
+  /** Optional opaque white box behind the whole text block. */
+  whiteBackground?: boolean
 }
 
 /** A text item as rendered on the final meme (fixed box w/ player text, or freeform line). */
@@ -94,6 +96,14 @@ export interface RenderTextItem {
   font: string
   align: TextAlign
   rotation: number
+  /** Draw an opaque white rectangle behind the text block. */
+  whiteBackground?: boolean
+}
+
+/** Optional white bars above/below the template image. */
+export interface MemePadding {
+  top: boolean
+  bottom: boolean
 }
 
 /** Player's caption submission for a round. */
@@ -101,6 +111,8 @@ export interface CaptionSubmission {
   /** Fixed template: boxId -> text. Freeform: the lines the player placed. */
   texts: Record<string, string>
   lines: FreeformLine[] // only used for freeform templates
+  /** Optional whitespace bars around the template (omitted when inactive). */
+  padding?: MemePadding
 }
 
 export interface PlayerInfo {
@@ -249,6 +261,7 @@ export const Events = {
   PhaseCaption: 'phase:caption',
   PhaseVoting: 'phase:voting',
   VotingProgress: 'voting:progress',
+  VotingTimer: 'voting:timer',
   BuddyPicked: 'buddy:picked',
   RoundResults: 'round:results',
   GameOver: 'game:over',
