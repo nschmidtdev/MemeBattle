@@ -1,8 +1,16 @@
 #!/bin/bash
 set -euo pipefail
 
+if [ -z "${DATABASE_URL:-}" ]; then
+  echo "ERROR: DATABASE_URL is not set." >&2
+  echo "Use the all-in-one image (tag: latest-bundled) for a single container," >&2
+  echo "or pass DATABASE_URL=postgresql://user:password@host:5432/db?schema=public." >&2
+  exit 1
+fi
+
 UPLOAD_DIR="${UPLOAD_DIR:-/data/uploads}"
 mkdir -p "$UPLOAD_DIR"
+export UPLOAD_DIR
 
 echo "Applying database migrations..."
 ./node_modules/.bin/prisma migrate deploy

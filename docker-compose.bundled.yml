@@ -1,0 +1,33 @@
+# All-in-one deployment: app + PostgreSQL in a single container.
+# The database lives in the `data` volume (under /data/pgdata); no DB service,
+# no DATABASE_URL and no POSTGRES_PASSWORD needed.
+services:
+  app:
+    image: ${BUNDLED_IMAGE:-ghcr.io/nschmidtdev/memebattle:latest-bundled}
+    restart: unless-stopped
+    stop_grace_period: 30s
+    ports:
+      - "${APP_BIND:-0.0.0.0}:${APP_PORT:-3000}:3000"
+    environment:
+      PORT: "3000"
+      UPLOAD_DIR: /data/uploads
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@localhost}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      COOKIE_SECURE: ${COOKIE_SECURE:-}
+      CORS_ORIGIN: ${CORS_ORIGIN:-}
+      SEED_ON_BOOT: ${SEED_ON_BOOT:-true}
+    volumes:
+      - data:/data
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - "-e"
+        - "fetch('http://127.0.0.1:3000/api/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+volumes:
+  data:
