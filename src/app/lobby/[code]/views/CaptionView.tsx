@@ -2,10 +2,10 @@
 
 import { useEffect, useRef, useState } from 'react'
 import type { CaptionSubmission, FreeformLine, MemePadding, TemplateData } from '@/lib/types'
-import { clampFreeformLine } from '@/lib/meme'
+import { clampFreeformLine, normalizeMemePadding } from '@/lib/meme'
 import FreeformEditor from './FreeformEditor'
 
-const NO_PADDING: MemePadding = { top: false, bottom: false }
+const NO_PADDING: MemePadding = { top: 0, bottom: 0 }
 
 interface Props {
   template: TemplateData | null
@@ -64,8 +64,8 @@ export default function CaptionView({
   const templateKey = template ? `${template.id}|${template.imageKey}` : null
   const lastTemplateKey = useRef<string | null>(null)
   const submissionLines = submission?.lines ?? null
-  const submissionPadTop = submission?.padding?.top === true
-  const submissionPadBottom = submission?.padding?.bottom === true
+  const submissionPadTop = normalizeMemePadding(submission?.padding)?.top ?? 0
+  const submissionPadBottom = normalizeMemePadding(submission?.padding)?.bottom ?? 0
 
   // Prefill from the template's boxes. A real template change (reroll) only
   // replaces the lines when the player has not written any text yet; otherwise
@@ -127,7 +127,8 @@ export default function CaptionView({
   const submit = () => {
     if (isSubmitted || rerollPending || !hasText) return
     const cleaned = lines.filter((l) => l.text.trim() !== '').map(clampFreeformLine)
-    const activePadding = padding.top || padding.bottom ? { top: padding.top, bottom: padding.bottom } : undefined
+    const activePadding =
+      padding.top > 0 || padding.bottom > 0 ? { top: padding.top, bottom: padding.bottom } : undefined
     onSubmit(activePadding ? { texts: {}, lines: cleaned, padding: activePadding } : { texts: {}, lines: cleaned })
     setLocalSubmitted(true)
   }

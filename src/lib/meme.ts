@@ -14,7 +14,9 @@ import type {
 import { imageUrl } from './images'
 
 /** White bar height per active side, relative to the template image height. */
-export const MEME_PAD_RATIO = 0.2
+export const MAX_MEME_PAD_RATIO = 1
+/** Legacy boolean padding (`true`) used to mean one fifth of the image height. */
+const LEGACY_MEME_PAD_RATIO = 0.2
 
 /** Vertical breathing room inside an optional white text box, relative to the font size. */
 export const MEME_TEXT_BOX_PAD_RATIO = 0.15
@@ -27,16 +29,25 @@ export function clampMemeValue(value: number, min: number, max: number): number 
 }
 
 /**
- * Only an explicit `true` activates a padding bar. Anything else (missing,
- * strings, numbers, both false) collapses to `undefined`, so legacy
- * submissions and old clients keep rendering exactly as before.
+ * Normalise padding from clients. Numeric values are fractions of the image
+ * height and are clamped to 0..MAX_MEME_PAD_RATIO (100% — a bar can be as tall
+ * as the image itself). Legacy boolean payloads (`true`) keep the old 20% bar.
  */
 export function normalizeMemePadding(value: unknown): MemePadding | undefined {
   if (!value || typeof value !== 'object') return undefined
   const raw = value as { top?: unknown; bottom?: unknown }
-  const top = raw.top === true
-  const bottom = raw.bottom === true
-  if (!top && !bottom) return undefined
+
+  const side = (input: unknown): number => {
+    if (input === true) return LEGACY_MEME_PAD_RATIO
+    if (input === false || input === undefined || input === null) return 0
+    const parsed = typeof input === 'number' ? input : Number.NaN
+    if (!Number.isFinite(parsed)) return 0
+    return clampMemeValue(parsed, 0, MAX_MEME_PAD_RATIO)
+  }
+
+  const top = side(raw.top)
+  const bottom = side(raw.bottom)
+  if (top <= 0 && bottom <= 0) return undefined
   return { top, bottom }
 }
 
@@ -178,10 +189,10 @@ export interface MemeCanvasLayout {
 /**
  * Size the final canvas before anything is drawn.
  *
- * Each active bar is `MEME_PAD_RATIO` of the rendered image height. The whole
- * canvas (image + bars) must stay inside the `maxDim` budget, so the image is
- * scaled down accordingly and keeps its aspect ratio. Without padding this is
- * exactly the old image sizing.
+ * Each bar is its own fraction of the rendered image height (0..1, max. the
+ * image height). The whole canvas (image + bars) must stay inside the `maxDim`
+ * budget, so the image is scaled down accordingly and keeps its aspect ratio.
+ * Without padding this is exactly the old image sizing.
  */
 export function memeCanvasLayout(
   naturalWidth: number,
@@ -192,16 +203,16 @@ export function memeCanvasLayout(
 ): MemeCanvasLayout {
   const iw = Math.max(1, Number(naturalWidth) || 1)
   const ih = Math.max(1, Number(naturalHeight) || 1)
-  const top = padding?.top === true
-  const bottom = padding?.bottom === true
-  const paddedHeight = ih * (1 + (top ? MEME_PAD_RATIO : 0) + (bottom ? MEME_PAD_RATIO : 0))
+  const top = clampMemeValue(Number(padding?.top ?? 0), 0, MAX_MEME_PAD_RATIO)
+  const bottom = clampMemeValue(Number(padding?.bottom ?? 0), 0, MAX_MEME_PAD_RATIO)
+  const paddedHeight = ih * (1 + top + bottom)
   const longest = Math.max(iw, paddedHeight)
   const target = Math.max(1, maxDim)
   const scale = allowUpscale ? target / longest : Math.min(1, target / longest)
   let imageWidth = Math.max(1, Math.round(iw * scale))
   let imageHeight = Math.max(1, Math.round(ih * scale))
-  let padTop = top ? Math.max(1, Math.round(imageHeight * MEME_PAD_RATIO)) : 0
-  let padBottom = bottom ? Math.max(1, Math.round(imageHeight * MEME_PAD_RATIO)) : 0
+  let padTop = top > 0 ? Math.max(1, Math.round(imageHeight * top)) : 0
+  let padBottom = bottom > 0 ? Math.max(1, Math.round(imageHeight * bottom)) : 0
 
   // Rounding the bars independently can exceed the budget by a pixel or two.
   // Trim the image (keeping its aspect ratio) until image + bars fit exactly.
@@ -210,8 +221,8 @@ export function memeCanvasLayout(
     const nextHeight = Math.max(1, imageHeight - overflow)
     imageWidth = Math.max(1, Math.round(imageWidth * (nextHeight / imageHeight)))
     imageHeight = nextHeight
-    padTop = top ? Math.max(1, Math.round(imageHeight * MEME_PAD_RATIO)) : 0
-    padBottom = bottom ? Math.max(1, Math.round(imageHeight * MEME_PAD_RATIO)) : 0
+    padTop = top > 0 ? Math.max(1, Math.round(imageHeight * top)) : 0
+    padBottom = bottom > 0 ? Math.max(1, Math.round(imageHeight * bottom)) : 0
   }
 
   return {

@@ -102,8 +102,10 @@ export interface RenderTextItem {
 
 /** Optional white bars above/below the template image. */
 export interface MemePadding {
-  top: boolean
-  bottom: boolean
+  /** Bar height as a fraction of the image height (0..1). */
+  top: number
+  /** Bar height as a fraction of the image height (0..1). */
+  bottom: number
 }
 
 /** Player's caption submission for a round. */

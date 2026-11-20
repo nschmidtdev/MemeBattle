@@ -24,8 +24,9 @@ meme-maker wins. No accounts, no filters, no mercy.
 - **White text boxes** — any text line can get an opaque white background (very
   light text automatically switches to dark) so captions stay readable on busy
   templates.
-- **Optional top/bottom whitespace** — add white bars above, below or around the
-  template image, giving captions extra room without changing the image itself.
+- **Configurable top/bottom whitespace** — add white bars above and/or below the
+  template image, each adjustable from 0–100% of the image height (a bar can be
+  as tall as the image), without changing the image itself.
 - **Animated GIF templates** — GIFs animate in the editor, voting and result
   galleries (the live image sits under a transparent text layer); PNG downloads
   are still frames.

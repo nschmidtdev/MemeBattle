@@ -12,7 +12,7 @@ import {
 } from '@/lib/types'
 import { imageUrl } from '@/lib/images'
 import {
-  MEME_PAD_RATIO,
+  MAX_MEME_PAD_RATIO,
   MEME_TEXT_BOX_PAD_RATIO,
   clampFreeformLine,
   isLightTextColor,
@@ -29,13 +29,6 @@ interface Props {
   padding: MemePadding
   onPaddingChange: (padding: MemePadding) => void
 }
-
-const PADDING_OPTIONS: Array<{ label: string; top: boolean; bottom: boolean }> = [
-  { label: 'None', top: false, bottom: false },
-  { label: 'Top', top: true, bottom: false },
-  { label: 'Bottom', top: false, bottom: true },
-  { label: 'Both', top: true, bottom: true },
-]
 
 const NEW_LINE: Omit<FreeformLine, 'id'> = {
   text: '',
@@ -77,8 +70,8 @@ export default function FreeformEditor({
   const natural = imageSize && imageSize.key === template.imageKey ? imageSize : null
   const imageW = natural?.width ?? 4
   const imageH = natural?.height ?? 3
-  const padTopRatio = padding.top ? MEME_PAD_RATIO : 0
-  const padBottomRatio = padding.bottom ? MEME_PAD_RATIO : 0
+  const padTopRatio = clamp(padding.top, 0, MAX_MEME_PAD_RATIO)
+  const padBottomRatio = clamp(padding.bottom, 0, MAX_MEME_PAD_RATIO)
   const totalRatio = 1 + padTopRatio + padBottomRatio
 
   // Font size is relative to the full canvas height (image + bars) -> track the stage height.
@@ -264,24 +257,58 @@ export default function FreeformEditor({
   return (
     <div>
       {/* ------------------------------------------------------ whitespace */}
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <span className="text-xs font-semibold text-dim">Canvas whitespace</span>
-        <div className="flex overflow-hidden rounded-lg border border-line" role="group" aria-label="Canvas whitespace">
-          {PADDING_OPTIONS.map((opt) => {
-            const active = padding.top === opt.top && padding.bottom === opt.bottom
-            return (
-              <button
-                key={opt.label}
-                type="button"
-                className={`min-h-11 px-3 text-xs ${active ? 'bg-punch font-bold text-night' : 'bg-card2 text-dim'} disabled:cursor-default disabled:opacity-40`}
-                aria-pressed={active}
-                disabled={disabled}
-                onClick={() => onPaddingChange({ top: opt.top, bottom: opt.bottom })}
-              >
-                {opt.label}
-              </button>
-            )
-          })}
+      <div className="mb-3 rounded-xl border border-line bg-night2 p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-xs font-semibold text-dim">
+            Canvas whitespace
+            <span className="ml-2 font-normal">0–100% of the image height per side</span>
+          </span>
+          {(padTopRatio > 0 || padBottomRatio > 0) && (
+            <button
+              type="button"
+              className="text-xs font-semibold text-dim underline hover:text-ink disabled:opacity-40"
+              disabled={disabled}
+              onClick={() => onPaddingChange({ top: 0, bottom: 0 })}
+            >
+              Clear
+            </button>
+          )}
+        </div>
+        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+          <label className="flex items-center gap-2 text-xs text-dim">
+            <span className="w-12 font-semibold">Top</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={1}
+              value={Math.round(padTopRatio * 100)}
+              disabled={disabled}
+              aria-valuetext={`${Math.round(padTopRatio * 100)} percent of the image height`}
+              className="min-w-0 flex-1 accent-punch disabled:opacity-40"
+              onChange={(event) =>
+                onPaddingChange({ ...padding, top: Number(event.target.value) / 100 })
+              }
+            />
+            <span className="w-9 text-right tabular-nums">{Math.round(padTopRatio * 100)}%</span>
+          </label>
+          <label className="flex items-center gap-2 text-xs text-dim">
+            <span className="w-12 font-semibold">Bottom</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={1}
+              value={Math.round(padBottomRatio * 100)}
+              disabled={disabled}
+              aria-valuetext={`${Math.round(padBottomRatio * 100)} percent of the image height`}
+              className="min-w-0 flex-1 accent-punch disabled:opacity-40"
+              onChange={(event) =>
+                onPaddingChange({ ...padding, bottom: Number(event.target.value) / 100 })
+              }
+            />
+            <span className="w-9 text-right tabular-nums">{Math.round(padBottomRatio * 100)}%</span>
+          </label>
         </div>
       </div>
 

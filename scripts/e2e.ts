@@ -433,6 +433,7 @@ async function runSuite() {
         rotation: 0,
       },
     ],
+    padding: { top: 2, bottom: 0 },
   })
 
   const pv = await pvAEvent
@@ -443,6 +444,11 @@ async function runSuite() {
   })
   const bMeme = pv.memes?.find((m: any) => m.playerId === jB.playerId)
   ok('freeform lines carried into voting', bMeme?.submission?.lines?.length === 1, bMeme?.submission)
+  ok(
+    'submission padding is clamped to the image height',
+    bMeme?.submission?.padding?.top === 1 && bMeme?.submission?.padding?.bottom === 0,
+    bMeme?.submission?.padding,
+  )
   const aMeme = pv.memes?.find((m: any) => m.playerId === jA.playerId)
   ok(
     'rerolled template used for voting',
