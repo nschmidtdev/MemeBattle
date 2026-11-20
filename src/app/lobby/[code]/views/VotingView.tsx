@@ -1,15 +1,14 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import type { ChaosRule, MemeInfo, VoteValue } from '@/lib/types'
+import type { ChaosRule, VoteValue, VotingMemeInfo } from '@/lib/types'
 import { RULE_INFO } from '@/lib/modes'
 import MemeView from '@/components/MemeView'
 
 interface Props {
   round: number
-  memes: MemeInfo[]
+  memes: VotingMemeInfo[]
   current: number
-  myId: string | null
   onVote: (index: number, value: VoteValue) => void
   /** Votes restored from the server after a reconnect. */
   initialVotes?: Record<number, VoteValue>
@@ -33,7 +32,6 @@ export default function VotingView({
   round,
   memes,
   current,
-  myId,
   onVote,
   initialVotes,
   voteError,
@@ -85,13 +83,12 @@ export default function VotingView({
     )
   }
 
-  const isOwn = meme.playerId === myId
+  const isOwn = meme.mine
   /** Submitted nothing this round: no votes and no Buddy pick. */
-  const isSpectator = myId !== null && !memes.some((m) => m.playerId === myId)
+  const isSpectator = !memes.some((m) => m.mine)
   const myVote = myVotes[current]
   const ready = renderedIndex === current
   const progress = memes.length > 0 ? ((current + 1) / memes.length) * 100 : 0
-  const buddyMeme = buddyIndex !== null ? (memes[buddyIndex] ?? null) : null
   const buddyIsCurrent = buddyIndex !== null && buddyIndex === current
   const voteButtons = canDownvote ? VOTE_BTNS : VOTE_BTNS.filter((b) => b.value !== 'down')
 
@@ -147,14 +144,9 @@ export default function VotingView({
             />
           </div>
 
-          <div className="mt-3 flex items-center justify-center gap-2">
-            <span
-              className="flex h-8 w-8 items-center justify-center rounded-full text-sm font-extrabold text-night"
-              style={{ background: meme.color }}
-            >
-              {meme.username[0]?.toUpperCase()}
-            </span>
-            <strong>{meme.username}</strong>
+          <div className="mt-3 flex items-center justify-center gap-2 text-sm text-dim">
+            <span aria-hidden>🎭</span>
+            <span>Anonymous meme</span>
             {isOwn && (
               <span className="rounded-full border border-sun/60 bg-sun/10 px-2 py-0.5 text-xs font-semibold text-sun">
                 your meme
@@ -230,7 +222,7 @@ export default function VotingView({
                         className="inline-flex rounded-xl border border-line bg-night px-3 py-2 text-sm font-semibold text-dim"
                         title="One Meme Buddy pick per round"
                       >
-                        🤝 Meme Buddy: {buddyMeme?.username ?? 'picked'}
+                        🤝 Meme Buddy picked
                       </span>
                     )}
                   </div>

@@ -16,6 +16,7 @@ import type {
   TemplateData,
   VoteTally,
   VoteValue,
+  VotingMemeInfo,
 } from '../lib/types'
 import {
   CHAOS_RULES,
@@ -34,6 +35,7 @@ import { normalizeMemePadding } from '../lib/meme'
 import { MEME_BUDDY_POINTS, computeBuddyOutcome, computeScore } from '../lib/scoring'
 import type { BuddyPickInput } from '../lib/scoring'
 import { loadAdultPackIds, loadTemplates } from './templates'
+import { snapCaptionTime } from '../lib/timing'
 
 export const MAX_PLAYERS = 30
 export const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
@@ -139,7 +141,7 @@ export function normalizeSettings(input: unknown): LobbySettings {
     mode: normalizeMode(raw.mode),
     rounds: clampInt(raw.rounds, 1, 10, 3),
     rerolls: clampInt(raw.rerolls, 0, MAX_REROLLS, DEFAULT_REROLLS),
-    captionTime: clampInt(raw.captionTime, 5, 120, 45),
+    captionTime: snapCaptionTime(raw.captionTime),
     voteTime: clampInt(raw.voteTime, 3, 60, 10),
     packIds: normalizePackIds(raw.packIds),
     lobbyName: sanitizeLobbyName(raw.lobbyName),
@@ -683,19 +685,33 @@ export class Lobby {
       return
     }
 
-    this.hooks.broadcast(Events.PhaseVoting, {
-      round: this.round,
-      memes: this.memes,
-      count: this.memes.length,
-      current: 0,
-      timeLeft: this.roundVoteTime,
-      timeTotal: this.roundVoteTime,
-      mode: this.settings.mode,
-      rule: this.roundRule,
-      scoresEnabled: this.settings.mode !== 'relaxed',
-      canDownvote: this.roundRule !== 'noDownvotes',
-    })
+    // Sent per player instead of broadcast: the payload must not reveal who
+    // made which meme, and `mine` differs per receiver.
+    for (const pl of this.players.values()) {
+      if (!pl.socketId || !pl.connected) continue
+      this.hooks.sendTo(pl.socketId, Events.PhaseVoting, {
+        round: this.round,
+        memes: this.votingMemesFor(pl.id),
+        count: this.memes.length,
+        current: 0,
+        timeLeft: this.roundVoteTime,
+        timeTotal: this.roundVoteTime,
+        mode: this.settings.mode,
+        rule: this.roundRule,
+        scoresEnabled: this.settings.mode !== 'relaxed',
+        canDownvote: this.roundRule !== 'noDownvotes',
+      })
+    }
     this.showMeme(0)
+  }
+
+  /** Anonymised voting payload for one player: no names, only a `mine` flag. */
+  private votingMemesFor(playerId: string): VotingMemeInfo[] {
+    return this.memes.map((meme) => ({
+      template: meme.template,
+      submission: meme.submission,
+      mine: meme.playerId === playerId,
+    }))
   }
 
   private showMeme(index: number) {
@@ -1084,7 +1100,7 @@ export class Lobby {
       const pl = this.players.get(playerId)
       send(Events.PhaseVoting, {
         round: this.round,
-        memes: this.memes,
+        memes: this.votingMemesFor(playerId),
         count: this.memes.length,
         current: this.currentMeme,
         timeLeft: Math.max(0, Math.ceil((this.memeSwitchAt - Date.now()) / 1000)),

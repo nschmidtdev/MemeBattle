@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type {
   CaptionSubmission,
   FinalMeme,
@@ -190,6 +191,59 @@ function ArchiveIcon() {
   return <Icon name="archive" className="h-4 w-4" />
 }
 
+/** Enlarged hover preview: real mouse/trackpad only, never on touch. */
+const HOVER_PREVIEW_QUERY = '(hover: hover) and (pointer: fine)'
+/** Short delay so sweeping across the grid does not flash one overlay per card. */
+const HOVER_PREVIEW_DELAY_MS = 120
+
+/**
+ * Full-screen, screen-fitting enlargement of one meme. Rendered through a
+ * portal and pointer-events-none, so it can neither be clipped by the card
+ * nor interrupt its hover state. Purely visual — screen readers get the card.
+ */
+function HoverMemePreview({
+  meme,
+  template,
+  submission,
+  showScore,
+}: {
+  meme: CardMeme
+  template: TemplateData
+  submission: CaptionSubmission
+  showScore: boolean
+}) {
+  return createPortal(
+    <div
+      aria-hidden="true"
+      className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-night/80 p-4 backdrop-blur-sm"
+    >
+      <figure className="flex max-h-[calc(100dvh-2rem)] max-w-[min(92vw,1400px)] flex-col items-center gap-2 overflow-hidden">
+        <div className="meme-canvas-wrap min-h-0 max-w-full">
+          <MemeView
+            template={template}
+            submission={submission}
+            maxDim={1800}
+            className="h-auto max-h-[calc(100dvh-5rem)]! w-auto max-w-full object-contain"
+          />
+        </div>
+        <figcaption className="flex max-w-full items-center justify-center gap-x-2 overflow-hidden whitespace-nowrap rounded-full border border-line/80 bg-night/90 px-3 py-1 text-sm font-bold text-ink shadow-lg">
+          {meme.rank !== undefined && (
+            <span className="flex-none text-base" title={`Rank ${meme.rank}`}>
+              {medal(meme.rank)}
+            </span>
+          )}
+          <span className="min-w-0 max-w-[60vw] truncate">{meme.username}</span>
+          <span className="flex-none text-[10px] uppercase tracking-wider text-dim">R{meme.round}</span>
+          {showScore && (
+            <span className={`flex-none tabular-nums ${scoreCls(meme.score)}`}>{fmt(meme.score)}</span>
+          )}
+        </figcaption>
+      </figure>
+    </div>,
+    document.body,
+  )
+}
+
 /**
  * Gallery card: the canvas is only mounted once the card approaches the
  * viewport, so a long game never allocates hundreds of canvases at once.
@@ -210,7 +264,9 @@ function MemeCard({
 }) {
   const holderRef = useRef<HTMLElement | null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const previewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [visible, setVisible] = useState(false)
+  const [preview, setPreview] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveState, setSaveState] = useState<'idle' | 'ok' | 'fail'>('idle')
 
@@ -235,8 +291,41 @@ function MemeCard({
   useEffect(() => {
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current)
+      if (previewTimerRef.current) clearTimeout(previewTimerRef.current)
     }
   }, [])
+
+  // A fixed overlay can outlive the card when the page scrolls or resizes under
+  // a still pointer, which does not always fire pointerleave. Close it then.
+  useEffect(() => {
+    if (!preview) return
+    const close = () => setPreview(false)
+    window.addEventListener('scroll', close, true)
+    window.addEventListener('resize', close)
+    return () => {
+      window.removeEventListener('scroll', close, true)
+      window.removeEventListener('resize', close)
+    }
+  }, [preview])
+
+  const stopPreviewTimer = () => {
+    if (previewTimerRef.current) {
+      clearTimeout(previewTimerRef.current)
+      previewTimerRef.current = null
+    }
+  }
+
+  const schedulePreview = () => {
+    if (typeof window === 'undefined' || !window.matchMedia(HOVER_PREVIEW_QUERY).matches) return
+    if (!meme.template || !meme.submission) return
+    stopPreviewTimer()
+    previewTimerRef.current = setTimeout(() => setPreview(true), HOVER_PREVIEW_DELAY_MS)
+  }
+
+  const hidePreview = () => {
+    stopPreviewTimer()
+    setPreview(false)
+  }
 
   const gold = meme.rank === 1
   const buddies = buddyCountOf(meme)
@@ -260,6 +349,9 @@ function MemeCard({
   return (
     <figure
       ref={holderRef}
+      onPointerEnter={schedulePreview}
+      onPointerLeave={hidePreview}
+      onPointerCancel={hidePreview}
       className={`relative touch-manipulation select-none overflow-hidden rounded-2xl border bg-night2 ${
         gold
           ? 'border-sun/70 shadow-[0_0_18px_rgba(255,201,60,0.25)]'
@@ -286,7 +378,12 @@ function MemeCard({
       <div className="meme-canvas-wrap border-none bg-black">
         {visible ? (
           meme.template && meme.submission ? (
-            <MemeView template={meme.template} submission={meme.submission} maxDim={320} className="max-h-56 w-auto max-w-full" />
+            <MemeView
+              template={meme.template}
+              submission={meme.submission}
+              maxDim={1200}
+              className="h-auto w-full object-contain"
+            />
           ) : (
             <div className="flex h-48 w-full items-center justify-center px-3 text-center text-xs text-dim">
               Meme preview unavailable
@@ -338,6 +435,14 @@ function MemeCard({
           </div>
         )}
       </figcaption>
+      {preview && meme.template && meme.submission && (
+        <HoverMemePreview
+          meme={meme}
+          template={meme.template}
+          submission={meme.submission}
+          showScore={showScore}
+        />
+      )}
     </figure>
   )
 }
@@ -359,7 +464,7 @@ function MemeGallery({
   showScore?: boolean
 }) {
   return (
-    <div className="mx-auto grid max-w-2xl grid-cols-1 justify-center gap-3 sm:grid-cols-2 xl:grid-cols-3">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       {memes.map((meme, i) => (
         <MemeCard
           key={`${meme.round}-${meme.playerId}-${i}`}

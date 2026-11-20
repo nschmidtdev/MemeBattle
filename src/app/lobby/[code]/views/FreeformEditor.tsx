@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import type { CSSProperties } from 'react'
 import type { FreeformLine, MemePadding, TextAlign, TemplateData } from '@/lib/types'
 import {
   FONT_OPTIONS,
@@ -22,6 +23,52 @@ import {
   type MemeResizeHandle,
 } from '@/lib/meme'
 import { randomId } from '@/lib/client'
+
+/**
+ * Text input that grows with its content and on focus. Enter inserts a hard
+ * line break, which the meme renderer already honours.
+ */
+function GrowingTextarea({
+  value,
+  onChange,
+  maxLength,
+  disabled,
+  placeholder,
+  onFocus,
+  style,
+}: {
+  value: string
+  onChange: (value: string) => void
+  maxLength: number
+  disabled: boolean
+  placeholder: string
+  onFocus: () => void
+  style: CSSProperties
+}) {
+  const ref = useRef<HTMLTextAreaElement | null>(null)
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight + 2}px`
+  }, [value])
+
+  return (
+    <textarea
+      ref={ref}
+      rows={2}
+      className="min-h-11 w-full resize-none overflow-hidden rounded-lg border border-line bg-night px-3 py-2 text-base font-semibold leading-snug focus:min-h-24"
+      style={style}
+      value={value}
+      maxLength={maxLength}
+      disabled={disabled}
+      placeholder={placeholder}
+      onFocus={onFocus}
+      onChange={(e) => onChange(e.target.value)}
+    />
+  )
+}
 
 interface Props {
   template: TemplateData
@@ -525,11 +572,11 @@ export default function FreeformEditor({
           return (
             <div
               key={l.id}
-              className={`rounded-xl border bg-night2/80 p-2 transition-colors ${
+              className={`overflow-hidden rounded-xl border bg-night2/80 p-2 transition-colors ${
                 sel ? 'border-sky' : 'border-line'
               }`}
             >
-              <div className="flex items-center gap-2">
+              <div className="flex items-start gap-2">
                 <button
                   type="button"
                   className="flex h-11 w-11 flex-none items-center justify-center rounded-lg border border-line bg-card2 text-sm text-dim hover:text-ink"
@@ -540,29 +587,32 @@ export default function FreeformEditor({
                 >
                   {sel ? '▾' : '🎨'}
                 </button>
-                <input
-                  className="min-h-11 min-w-0 flex-1 rounded-lg border border-line bg-night px-3 py-2 text-base font-semibold"
-                  style={{ fontFamily: memeFontFamily(l.font), fontWeight: memeFontWeight(l.font) }}
-                  value={l.text}
-                  maxLength={maxTextLen}
-                  disabled={disabled}
-                  placeholder={`Text ${i + 1}…`}
-                  onFocus={() => setSelectedId(l.id)}
-                  onChange={(e) => update(l.id, { text: e.target.value })}
-                />
-                <span className="w-11 flex-none text-right text-[11px] tabular-nums text-dim" aria-hidden>
-                  {l.text.length}/{maxTextLen}
-                </span>
-                <button
-                  type="button"
-                  className="flex h-11 w-11 flex-none items-center justify-center rounded-lg border border-line bg-card2 text-rose hover:border-rose"
-                  title="Remove this text"
-                  aria-label="Remove this text"
-                  disabled={disabled}
-                  onClick={() => removeLine(l.id)}
-                >
-                  ✕
-                </button>
+                <div className="min-w-0 flex-1">
+                  <GrowingTextarea
+                    value={l.text}
+                    onChange={(text) => update(l.id, { text })}
+                    maxLength={maxTextLen}
+                    disabled={disabled}
+                    placeholder={`Text ${i + 1}…`}
+                    onFocus={() => setSelectedId(l.id)}
+                    style={{ fontFamily: memeFontFamily(l.font), fontWeight: memeFontWeight(l.font) }}
+                  />
+                  <div className="mt-1 flex items-center justify-end gap-2">
+                    <span className="text-right text-[11px] tabular-nums text-dim" aria-hidden>
+                      {l.text.length}/{maxTextLen}
+                    </span>
+                    <button
+                      type="button"
+                      className="flex h-8 w-8 flex-none items-center justify-center rounded-lg border border-line bg-card2 text-sm text-rose hover:border-rose"
+                      title="Remove this text"
+                      aria-label="Remove this text"
+                      disabled={disabled}
+                      onClick={() => removeLine(l.id)}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
               </div>
 
               {sel && !disabled && (

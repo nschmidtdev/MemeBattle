@@ -486,31 +486,47 @@ async function runSuite() {
   })
 
   const pv = await pvAEvent
-  await pvBEvent
+  const pvB = await pvBEvent
   ok('voting phase: 2 memes', pv.memes?.length === 2 && pv.current === 0, {
     memes: pv.memes?.length,
     current: pv.current,
   })
-  const bMeme = pv.memes?.find((m: any) => m.playerId === jB.playerId)
+  // Votes are anonymous: the voting payload must not identify the owner.
+  const anonymousVotingPayload = (payload: any) =>
+    (payload.memes ?? []).every(
+      (m: any) =>
+        m.playerId === undefined &&
+        m.username === undefined &&
+        m.avatar === undefined &&
+        m.color === undefined,
+    )
+  ok(
+    'voting payloads hide the meme owners',
+    anonymousVotingPayload(pv) && anonymousVotingPayload(pvB),
+    pv.memes?.[0],
+  )
+
+  const ownOfA = pv.memes?.findIndex((m: any) => m.mine === true) ?? -1
+  const ownOfB = pvB.memes?.findIndex((m: any) => m.mine === true) ?? -1
+  ok(
+    'voting payload flags the own meme per player',
+    ownOfA >= 0 && ownOfB >= 0 && ownOfA !== ownOfB,
+    { ownOfA, ownOfB },
+  )
+
+  const bMeme = pv.memes?.find((m: any) => m.submission?.lines?.[0]?.text === 'bob says hi')
   ok('freeform lines carried into voting', bMeme?.submission?.lines?.length === 1, bMeme?.submission)
   ok(
     'submission padding is clamped to the image height',
     bMeme?.submission?.padding?.top === 1 && bMeme?.submission?.padding?.bottom === 0,
     bMeme?.submission?.padding,
   )
-  const aMeme = pv.memes?.find((m: any) => m.playerId === jA.playerId)
+  const aMeme = ownOfA >= 0 ? pv.memes?.[ownOfA] : undefined
   ok(
     'rerolled template used for voting',
     aMeme?.template?.imageKey === rerolled.template?.imageKey,
     [aMeme?.template?.imageKey, rerolled.template?.imageKey],
   )
-
-  const ownOfA = pv.memes?.findIndex((m: any) => m.playerId === jA.playerId) ?? -1
-  const ownOfB = pv.memes?.findIndex((m: any) => m.playerId === jB.playerId) ?? -1
-  ok('both memes have an owner index', ownOfA >= 0 && ownOfB >= 0 && ownOfA !== ownOfB, {
-    ownOfA,
-    ownOfB,
-  })
 
   // Register early: round:results fires when the last meme timer ends, while we
   // are still processing votes here.
@@ -1295,7 +1311,9 @@ async function runSuite() {
   const sVotingData = await sVoting
   ok(
     'non-submitter scenario: voting has only B\'s meme',
-    sVotingData?.memes?.length === 1 && sVotingData.memes[0]?.playerId === s2.playerId,
+    sVotingData?.memes?.length === 1 &&
+      sVotingData.memes[0]?.mine === false &&
+      sVotingData.memes[0]?.playerId === undefined,
     sVotingData,
   )
 
@@ -1440,6 +1458,7 @@ async function runSuite() {
   const nTpl1 = waitEvent<any>(Neg1, 'caption:template', 15000)
   const nTpl2 = waitEvent<any>(Neg2, 'caption:template', 15000)
   const nVoting = waitEvent<any>(Neg1, 'phase:voting', 30000)
+  const nVoting2 = waitEvent<any>(Neg2, 'phase:voting', 30000)
   Neg1.emit('lobby:start')
   await nCaption
   await Promise.all([nTpl1, nTpl2])
@@ -1447,14 +1466,19 @@ async function runSuite() {
   Neg1.emit('caption:submit', { texts: { n: 'neg one' }, lines: [] })
   Neg2.emit('caption:submit', { texts: { n: 'neg two' }, lines: [] })
   const nVotingData = await nVoting
+  const nVotingData2 = await nVoting2
 
   const nResultsP = waitEvent<any>(Neg1, 'round:results', 40000)
   const nMeme1Shown1 = waitEventWhere<any>(Neg1, 'voting:progress', (p: any) => p.index === 1, 30000)
   const nMeme1Shown2 = waitEventWhere<any>(Neg2, 'voting:progress', (p: any) => p.index === 1, 30000)
 
   // Meme 0: its non-owner downvotes and gives the buddy.
-  const nOwner0IsA = nVotingData.memes?.[0]?.playerId === neg1.playerId
+  const nOwner0IsA = nVotingData.memes?.[0]?.mine === true
   const nVoter0 = nOwner0IsA ? Neg2 : Neg1
+  // Sanity: the other payload must flag the same meme as not-mine.
+  const nOwner0Flagged =
+    nOwner0IsA === (nVotingData2.memes?.[0]?.mine === false)
+  if (!nOwner0Flagged) throw new Error('voting payloads disagree about the own meme')
   nVoter0.emit('vote:cast', { index: 0, value: 'down' })
   const nBuddy0Ack = waitEvent<any>(nVoter0, 'buddy:picked', 5000)
   nVoter0.emit('buddy:pick', { index: 0 })

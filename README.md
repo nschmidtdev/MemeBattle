@@ -58,6 +58,10 @@ meme-maker wins. No accounts, no filters, no mercy.
   local pack with progress, dedupe and error reporting. With an optional
   `IMGFLIP_API_KEY` (Imgflip subscription), the Imgflip tab searches the full
   catalog instead of only the free top 100.
+- **Anonymous voting** — during the voting phase nobody sees who made which
+  meme: no creator name, avatar or ID is sent to the voters. Identities are
+  revealed with the round results. Votes and Meme Buddy picks stay secret until
+  then as well.
 - **Böse memes allowed** — there is intentionally no profanity filter and no
   auto-moderation. What you caption is what the room gets.
 - **Self-hosted & private** — Docker Compose or one all-in-one container with

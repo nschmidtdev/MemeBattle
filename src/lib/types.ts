@@ -158,6 +158,17 @@ export interface FinalMeme extends MemeEntry {
 /** A meme as sent to clients during the voting phase (same shape as a MemeEntry). */
 export type MemeInfo = MemeEntry
 
+/**
+ * A meme as sent to one voter during the voting phase. Owner identity is
+ * deliberately absent: votes stay anonymous until the results. `mine` marks
+ * the receiver's own meme (only used to hide the vote buttons).
+ */
+export interface VotingMemeInfo {
+  template: TemplateData
+  submission: CaptionSubmission
+  mine: boolean
+}
+
 /** One player's row in the final ranking. */
 export interface RankingEntry {
   playerId: string

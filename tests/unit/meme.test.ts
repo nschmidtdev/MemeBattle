@@ -7,6 +7,7 @@ import {
   memeCanvasLayout,
   normalizeMemePadding,
   resizeFreeformLine,
+  wrapMemeText,
 } from '../../src/lib/meme'
 import type { CaptionSubmission, FreeformLine, TemplateBox, TemplateData } from '../../src/lib/types'
 
@@ -399,5 +400,30 @@ describe('buildTextItems', () => {
     const [item] = buildTextItems(tpl, submission())
 
     expect(item.whiteBackground).toBe(false)
+  })
+})
+
+describe('wrapMemeText', () => {
+  const ctx = {
+    font: '',
+    measureText: (text: string) => ({ width: text.length * 8 }),
+  } as unknown as CanvasRenderingContext2D
+
+  it('keeps explicit line breaks as hard breaks', () => {
+    expect(wrapMemeText(ctx, 'first line\nsecond line', 'Impact', 16, 1000)).toEqual([
+      'first line',
+      'second line',
+    ])
+  })
+
+  it('keeps intentional blank lines', () => {
+    expect(wrapMemeText(ctx, 'a\n\nb', 'Impact', 16, 1000)).toEqual(['a', '', 'b'])
+  })
+
+  it('still wraps long text inside a hard-broken line', () => {
+    // 12 chars * 8px = 96px > 80px: the greedy wrapper splits the words.
+    const lines = wrapMemeText(ctx, 'one two three\nfour', 'Impact', 16, 80)
+    expect(lines.join('\n')).toContain('four')
+    expect(lines.length).toBeGreaterThan(2)
   })
 })

@@ -14,6 +14,7 @@ import {
 import { Events, type GameMode, type PackOption } from '@/lib/types'
 import GameModePicker from '@/components/GameModePicker'
 import { formatDuration } from '@/lib/format'
+import { CAPTION_TIME_VALUES, captionTimeFromIndex, captionTimeToIndex } from '@/lib/timing'
 import { sounds } from '@/lib/sounds'
 
 type PendingAction = 'quick' | 'code' | 'create' | null
@@ -324,8 +325,8 @@ export default function StartPage() {
                 <span className="mb-1 flex justify-between text-xs font-semibold uppercase tracking-wider text-dim">
                   Caption <b className="text-sun">{formatDuration(captionTime)}</b>
                 </span>
-                <input type="range" min={15} max={120} step={1} aria-valuetext={`${captionTime} seconds`} className="w-full accent-punch" value={captionTime} onChange={(e) => setCaptionTime(+e.target.value)} />
-                <span className="mt-0.5 flex justify-between text-[10px] tabular-nums text-dim"><span>15s</span><span>2m</span></span>
+                <input type="range" min={0} max={CAPTION_TIME_VALUES.length - 1} step={1} aria-valuetext={`${captionTime} seconds`} className="w-full accent-punch" value={captionTimeToIndex(captionTime)} onChange={(e) => setCaptionTime(captionTimeFromIndex(+e.target.value))} />
+                <span className="mt-0.5 flex justify-between text-[10px] tabular-nums text-dim"><span>5s</span><span>10m</span></span>
               </label>
               <label className="block">
                 <span className="mb-1 flex justify-between text-xs font-semibold uppercase tracking-wider text-dim">

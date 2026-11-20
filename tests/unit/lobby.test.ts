@@ -65,11 +65,14 @@ describe('normalizeSettings', () => {
     expect(normalizeSettings({ rerolls: 9.9 }).rerolls).toBe(9)
   })
 
-  it('clamps captionTime to 5..120', () => {
+  it('clamps captionTime to 5..600 and snaps above 2 minutes', () => {
     expect(normalizeSettings({ captionTime: 4 }).captionTime).toBe(5)
     expect(normalizeSettings({ captionTime: 5 }).captionTime).toBe(5)
     expect(normalizeSettings({ captionTime: 120 }).captionTime).toBe(120)
     expect(normalizeSettings({ captionTime: 121 }).captionTime).toBe(120)
+    expect(normalizeSettings({ captionTime: 137 }).captionTime).toBe(150)
+    expect(normalizeSettings({ captionTime: 600 }).captionTime).toBe(600)
+    expect(normalizeSettings({ captionTime: 999 }).captionTime).toBe(600)
   })
 
   it('clamps voteTime to 3..60', () => {

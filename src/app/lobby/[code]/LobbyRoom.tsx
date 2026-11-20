@@ -7,10 +7,10 @@ import type {
   ChaosRule,
   GameMode,
   GameOverPayload,
-  MemeInfo,
   RoundResult,
   TemplateData,
   VoteValue,
+  VotingMemeInfo,
 } from '@/lib/types'
 import { Events, MAX_REROLLS, MAX_TEXT_LEN } from '@/lib/types'
 import { formatDuration } from '@/lib/format'
@@ -48,7 +48,7 @@ interface CaptionState {
 
 interface VotingState {
   round: number
-  memes: MemeInfo[]
+  memes: VotingMemeInfo[]
   current: number
   /** Votes this player already cast, restored on reconnect. */
   votes: Record<number, VoteValue>
@@ -279,7 +279,7 @@ export default function LobbyRoom({ code }: { code: string }) {
       scoresEnabled,
     }: {
       round: number
-      memes: MemeInfo[]
+      memes: VotingMemeInfo[]
       current: number
       timeLeft: number
       timeTotal?: number
@@ -724,7 +724,6 @@ export default function LobbyRoom({ code }: { code: string }) {
           round={voting.round}
           memes={voting.memes}
           current={voting.current}
-          myId={myId}
           initialVotes={voting.votes}
           voteError={voteError}
           onVote={castVote}

@@ -5,6 +5,7 @@ import type { LobbyState } from '@/lib/client'
 import type { GameMode, PackOption } from '@/lib/types'
 import GameModePicker from '@/components/GameModePicker'
 import { formatDuration } from '@/lib/format'
+import { CAPTION_TIME_VALUES, captionTimeFromIndex, captionTimeToIndex } from '@/lib/timing'
 
 interface Props {
   state: LobbyState
@@ -238,9 +239,9 @@ export default function LobbyView({ state, myId, onSettings, onStart, onKick, er
             <span className="mb-1 flex justify-between text-xs font-semibold uppercase tracking-wider text-dim">
               Caption time <span className="font-bold text-sun">{formatDuration(captionTime)}</span>
             </span>
-            <input type="range" min={15} max={120} step={1} aria-valuetext={`${captionTime} seconds`} className={sliderCls} value={captionTime} disabled={!isHost}
-              onChange={(e) => { setCaptionTime(+e.target.value); onSettings({ captionTime: +e.target.value }) }} />
-            <span className="mt-0.5 flex justify-between text-[10px] tabular-nums text-dim"><span>15s</span><span>2m</span></span>
+            <input type="range" min={0} max={CAPTION_TIME_VALUES.length - 1} step={1} aria-valuetext={`${captionTime} seconds`} className={sliderCls} value={captionTimeToIndex(captionTime)} disabled={!isHost}
+              onChange={(e) => { const next = captionTimeFromIndex(+e.target.value); setCaptionTime(next); onSettings({ captionTime: next }) }} />
+            <span className="mt-0.5 flex justify-between text-[10px] tabular-nums text-dim"><span>5s</span><span>10m</span></span>
           </label>
 
           <label className="block">
