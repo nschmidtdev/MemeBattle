@@ -86,19 +86,21 @@ describe('normalizeSettings', () => {
     expect(settings.packIds).toEqual(['p1', 'p2', 'p3'])
   })
 
-  it('keeps at most 10 packIds', () => {
-    const packIds = Array.from({ length: 15 }, (_, i) => `pack-${i}`)
+  it('keeps at most 100 packIds', () => {
+    const packIds = Array.from({ length: 150 }, (_, i) => `pack-${i}`)
 
     const settings = normalizeSettings({ packIds })
 
-    expect(settings.packIds).toHaveLength(10)
-    expect(settings.packIds).toEqual(packIds.slice(0, 10))
+    expect(settings.packIds).toHaveLength(100)
+    expect(settings.packIds).toEqual(packIds.slice(0, 100))
   })
 
-  it('counts the 10-id cap after deduplication and trimming', () => {
-    const packIds = [...Array.from({ length: 9 }, (_, i) => `p${i}`), ' p0 ', 'p9', 'p10', 'p11']
+  it('counts the 100-id cap after deduplication and trimming', () => {
+    const packIds = [...Array.from({ length: 99 }, (_, i) => `p${i}`), ' p0 ', 'p99', 'p100', 'p101']
 
-    expect(normalizeSettings({ packIds }).packIds).toEqual([...Array.from({ length: 10 }, (_, i) => `p${i}`)])
+    expect(normalizeSettings({ packIds }).packIds).toEqual([
+      ...Array.from({ length: 100 }, (_, i) => `p${i}`),
+    ])
   })
 
   it('collapses lobby name whitespace and caps it at 24 characters', () => {

@@ -93,6 +93,12 @@ export default function LobbyView({ state, myId, onSettings, onStart, onKick, er
   }
 
   const connectedCount = state.players.filter((p) => p.connected).length
+  const allPacksSelected =
+    (packs?.length ?? 0) > 0 && (packs ?? []).every((p) => state.settings.packIds.includes(p.id))
+  const toggleAllPacks = () => {
+    if (!isHost) return
+    onSettings({ packIds: allPacksSelected ? [] : (packs ?? []).map((p) => p.id) })
+  }
   const canStart = isHost && connectedCount >= 2 && state.settings.packIds.length > 0 && !startPending
   const startHint =
     connectedCount < 2
@@ -204,9 +210,18 @@ export default function LobbyView({ state, myId, onSettings, onStart, onKick, er
           </label>
 
           <div className="sm:col-span-2">
-            <span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-dim">
-              Template packs <span className="text-sun">{state.settings.packIds.length} selected</span>
-            </span>
+            <div className="mb-2 flex items-center justify-between">
+              <span className="block text-xs font-semibold uppercase tracking-wider text-dim">
+                Template packs <span className="text-sun">{state.settings.packIds.length} selected</span>
+              </span>
+              <button
+                className="text-xs text-dim underline hover:text-ink disabled:opacity-40"
+                disabled={!isHost || !packs || packs.length === 0}
+                onClick={toggleAllPacks}
+              >
+                {allPacksSelected ? 'clear all' : 'select all'}
+              </button>
+            </div>
             <div className="flex flex-wrap gap-2">
               {packs === null && !packsError && (
                 <p className="animate-pulse text-sm text-dim">Loading template packs…</p>

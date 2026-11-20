@@ -36,7 +36,7 @@ export const GHOST_TTL_MS = 30_000
 /** When every connected eligible voter has voted on a meme, the remaining time is capped to this grace. */
 export const ALL_VOTED_GRACE_MS = 5_000
 /** Maximum number of template packs a lobby may select. */
-const MAX_PACK_IDS = 10
+const MAX_PACK_IDS = 100
 /** Longest allowed lobby name, after whitespace normalization. */
 const MAX_LOBBY_NAME_LEN = 24
 
