@@ -256,6 +256,25 @@ export function wrapMemeText(
   return lines.length ? lines : ['']
 }
 
+/** Bounds for the long edge of a full-size PNG export. */
+const DOWNLOAD_MIN_DIM = 2048
+const DOWNLOAD_MAX_DIM = 4096
+
+/**
+ * Long-edge target for a full-size PNG export.
+ *
+ * Missing intrinsic dimensions (an SVG without width/height, a placeholder
+ * size, a failed decode) fall back to the minimum so vectors still get a
+ * crisp canvas. Raster images keep their natural size because `renderMeme`
+ * never upscales them; only the 4096 cap makes very large photos smaller.
+ */
+export function downloadTargetSize(naturalWidth: number, naturalHeight: number): number {
+  const w = Number.isFinite(naturalWidth) ? Math.max(0, naturalWidth) : 0
+  const h = Number.isFinite(naturalHeight) ? Math.max(0, naturalHeight) : 0
+  const natural = Math.max(w, h)
+  return Math.min(DOWNLOAD_MAX_DIM, Math.max(DOWNLOAD_MIN_DIM, natural))
+}
+
 /** Load an image element from a URL (cross-origin safe when same-origin). */
 export function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -280,7 +299,9 @@ export async function downloadMemePng(
 
     await ensureMemeFontsReady()
     const image = await loadImage(imageUrl(template.imageKey))
-    const canvas = renderMeme(template, submission, image, 1024)
+    // Export at the image's natural resolution, bounded to a sane PNG size.
+    const target = downloadTargetSize(image.naturalWidth, image.naturalHeight)
+    const canvas = renderMeme(template, submission, image, target)
     const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
     if (!blob) return false
 

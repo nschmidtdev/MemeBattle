@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildTextItems } from '../../src/lib/meme'
+import { buildTextItems, downloadTargetSize } from '../../src/lib/meme'
 import type { CaptionSubmission, FreeformLine, TemplateBox, TemplateData } from '../../src/lib/types'
 
 function box(overrides: Partial<TemplateBox> = {}): TemplateBox {
@@ -49,6 +49,25 @@ function template(overrides: Partial<TemplateData> = {}): TemplateData {
 function submission(overrides: Partial<CaptionSubmission> = {}): CaptionSubmission {
   return { texts: {}, lines: [], ...overrides }
 }
+
+describe('downloadTargetSize', () => {
+  it('never goes below 2048 px, so small raster images stay native after rendering', () => {
+    // 1600 px long edge: the target is only an upper bound, renderMeme keeps
+    // raster images at their natural size instead of upscaling them.
+    expect(downloadTargetSize(1600, 1200)).toBe(2048)
+    expect(downloadTargetSize(0, 0)).toBe(2048)
+    expect(downloadTargetSize(Number.NaN, Number.NaN)).toBe(2048)
+  })
+
+  it('keeps the natural long edge for images above the minimum', () => {
+    expect(downloadTargetSize(3024, 1890)).toBe(3024)
+    expect(downloadTargetSize(1890, 3024)).toBe(3024)
+  })
+
+  it('caps very large images at 4096 px to keep the PNG allocation bounded', () => {
+    expect(downloadTargetSize(6000, 8000)).toBe(4096)
+  })
+})
 
 describe('buildTextItems', () => {
   it('prefers placed freeform lines over legacy texts and box defaults', () => {

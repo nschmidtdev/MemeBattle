@@ -124,6 +124,8 @@ export interface MemeEntry {
 /** A scored meme of a finished round — collected for the final gallery. */
 export interface FinalMeme extends MemeEntry {
   score: number
+  /** Number of Meme Buddies this meme received. */
+  buddyCount: number
   round: number
 }
 
@@ -157,20 +159,46 @@ export interface VoteTally {
 
 export type VoteValue = 'up' | 'down' | 'meh'
 
+/** One Meme Buddy pick of a finished round, for the results screen. */
+export interface RoundBuddyPick {
+  playerId: string
+  username: string
+  targetPlayerId: string
+  targetUsername: string
+  index: number
+  /** Half of the meme's final score (rounded); may be negative. */
+  bonus: number
+}
+
 export interface RoundResult {
   round: number
   memes: Array<{
     index: number
     playerId: string
     username: string
+    /** Final meme score: voteScore + buddyBonus. */
     score: number
+    /** Score from the votes alone (-1000..+1000). */
+    voteScore: number
+    /** MEME_BUDDY_POINTS × buddyCount. */
+    buddyBonus: number
+    buddyCount: number
+    /** Players who gave this meme their Meme Buddy. */
+    buddyPlayerIds: string[]
+    template: TemplateData
+    submission: CaptionSubmission
     up: number
     down: number
     meh: number
-    /** Competition rank by score (ties share a rank, e.g. 1, 1, 3). */
+    /** Competition rank by final score (ties share a rank, e.g. 1, 1, 3). */
     rank: number
   }>
+  /** Cumulative total per player id. */
   totals: Record<string, number>
+  /** Points scored in this round per player id (meme score + Meme Buddy bonus). */
+  roundTotals: Record<string, number>
+  /** Meme Buddy picks of this round. */
+  buddies: RoundBuddyPick[]
   /** Player display data by id, so clients can render results without a lobby state. */
   players: Record<string, { username: string; avatar: string; color: string }>
 }
@@ -206,6 +234,7 @@ export const Events = {
   CaptionSubmit: 'caption:submit',
   Reroll: 'caption:reroll',
   Vote: 'vote:cast',
+  BuddyPick: 'buddy:pick',
   PublicList: 'public:list',
   PlayAgain: 'game:play-again',
   Kick: 'lobby:kick',
@@ -220,6 +249,7 @@ export const Events = {
   PhaseCaption: 'phase:caption',
   PhaseVoting: 'phase:voting',
   VotingProgress: 'voting:progress',
+  BuddyPicked: 'buddy:picked',
   RoundResults: 'round:results',
   GameOver: 'game:over',
   Error: 'client:error',

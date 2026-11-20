@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { computeScore } from '../../src/lib/scoring'
+import { MEME_BUDDY_POINTS, computeBuddyOutcome, computeScore } from '../../src/lib/scoring'
 import type { VoteTally } from '../../src/lib/types'
 
 function tally(up: number, down: number, meh = 0): VoteTally {
@@ -60,5 +60,88 @@ describe('computeScore', () => {
         expect(score).toBeLessThanOrEqual(1000)
       }
     }
+  })
+})
+
+describe('computeBuddyOutcome', () => {
+  it('exposes the Meme Buddy points as 10', () => {
+    expect(MEME_BUDDY_POINTS).toBe(10)
+  })
+
+  it('leaves every meme unchanged when nobody picked a buddy', () => {
+    expect(computeBuddyOutcome([1000, -250, 0], [])).toEqual({
+      memeScores: [1000, -250, 0],
+      memeBuddyCounts: [0, 0, 0],
+      pickerBonuses: {},
+    })
+  })
+
+  it('adds 10 to the meme and gives the picker half of its final score', () => {
+    const outcome = computeBuddyOutcome([1000, 0], [{ playerId: 'alice', index: 0 }])
+
+    expect(outcome.memeScores).toEqual([1010, 0])
+    expect(outcome.memeBuddyCounts).toEqual([1, 0])
+    expect(outcome.pickerBonuses).toEqual({ alice: 505 })
+  })
+
+  it('keeps negative picker bonuses negative', () => {
+    // -1020 + 10 = -1010; half of that is -505.
+    const outcome = computeBuddyOutcome([-1020], [{ playerId: 'bob', index: 0 }])
+
+    expect(outcome.memeScores).toEqual([-1010])
+    expect(outcome.memeBuddyCounts).toEqual([1])
+    expect(outcome.pickerBonuses).toEqual({ bob: -505 })
+  })
+
+  it('adds 10 per buddy to a meme with multiple buddies', () => {
+    const outcome = computeBuddyOutcome(
+      [0, 200],
+      [
+        { playerId: 'alice', index: 0 },
+        { playerId: 'bob', index: 0 },
+      ],
+    )
+
+    expect(outcome.memeScores).toEqual([20, 200])
+    expect(outcome.memeBuddyCounts).toEqual([2, 0])
+    expect(outcome.pickerBonuses).toEqual({ alice: 10, bob: 10 })
+  })
+
+  it('rounds bonuses with Math.round', () => {
+    // 5 + 10 = 15 -> 7.5 -> 8; -25 + 10 = -15 -> -7.5 -> -7.
+    const outcome = computeBuddyOutcome(
+      [5, -25],
+      [
+        { playerId: 'alice', index: 0 },
+        { playerId: 'bob', index: 1 },
+      ],
+    )
+
+    expect(outcome.memeScores).toEqual([15, -15])
+    expect(outcome.pickerBonuses).toEqual({ alice: 8, bob: -7 })
+  })
+
+  it('ignores invalid meme indices but applies valid picks', () => {
+    const outcome = computeBuddyOutcome(
+      [100, 200],
+      [
+        { playerId: 'negative', index: -1 },
+        { playerId: 'tooHigh', index: 2 },
+        { playerId: 'fractional', index: 1.5 },
+        { playerId: 'valid', index: 1 },
+      ],
+    )
+
+    expect(outcome.memeScores).toEqual([100, 210])
+    expect(outcome.memeBuddyCounts).toEqual([0, 1])
+    expect(outcome.pickerBonuses).toEqual({ valid: 105 })
+  })
+
+  it('turns a vote-less meme into a 10 point meme with a 5 point bonus', () => {
+    const outcome = computeBuddyOutcome([0], [{ playerId: 'alice', index: 0 }])
+
+    expect(outcome.memeScores).toEqual([10])
+    expect(outcome.memeBuddyCounts).toEqual([1])
+    expect(outcome.pickerBonuses).toEqual({ alice: 5 })
   })
 })

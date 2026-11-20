@@ -9,6 +9,7 @@ import type {
   Phase,
   PlayerInfo,
   RankingEntry,
+  RoundBuddyPick,
   RoundResult,
   TemplateData,
   VoteTally,
@@ -23,7 +24,8 @@ import {
   ROTATION_BOUNDS,
   TEXT_WIDTH_BOUNDS,
 } from '../lib/types'
-import { computeScore } from '../lib/scoring'
+import { MEME_BUDDY_POINTS, computeBuddyOutcome, computeScore } from '../lib/scoring'
+import type { BuddyPickInput } from '../lib/scoring'
 import { loadTemplates } from './templates'
 
 export const MAX_PLAYERS = 30
@@ -49,6 +51,8 @@ export interface PlayerState {
   isHost: boolean
   submission: CaptionSubmission | null
   votes: Record<number, VoteValue>
+  /** Meme index this player gave their Meme Buddy to this round; one pick per round. */
+  buddyIndex: number | null
   /** Template currently dealt to this player (caption phase); set per round, replaced by rerolls. */
   template: TemplateData | null
   /** Rerolls used this round. */
@@ -267,6 +271,7 @@ export class Lobby {
       isHost: this.players.size === 0,
       submission: null,
       votes: {},
+      buddyIndex: null,
       template: null,
       rerolls: 0,
       submittedRounds: 0,
@@ -436,6 +441,7 @@ export class Lobby {
     this.players.forEach((pl) => {
       pl.submission = null
       pl.votes = {}
+      pl.buddyIndex = null
       pl.template = null
       pl.rerolls = 0
     })
@@ -495,6 +501,10 @@ export class Lobby {
   private beginVoting() {
     if (this.phase !== 'caption') return // idempotent: early-exit and full-timeout can both fire
     this.clearTimers() // kill the caption timeout when everyone submitted early
+    // Defensive reset: a fresh voting phase never inherits a buddy pick.
+    this.players.forEach((pl) => {
+      pl.buddyIndex = null
+    })
     const submitters = shuffle([...this.players.values()].filter((pl) => pl.submission))
     submitters.forEach((pl) => {
       pl.submittedRounds++
@@ -550,40 +560,92 @@ export class Lobby {
 
   private endVoting() {
     this.clearTimers()
-    const scored = this.memes.map((meme, index) => {
+    const voteScored = this.memes.map((meme, index) => {
       const votes = this.tallies.get(index) ?? { up: 0, down: 0, meh: 0 }
-      return { meme, index, votes, score: computeScore(votes) }
+      return { meme, index, votes, voteScore: computeScore(votes) }
     })
+
+    // Only picks that resolve to another player's meme count. pickBuddy already
+    // guarantees this; the check also protects against stale picks after a kick.
+    const buddyPicks: Array<{ picker: PlayerState; index: number }> = []
+    const buddyPlayerIds: string[][] = this.memes.map(() => [])
+    for (const pl of this.players.values()) {
+      const index = pl.buddyIndex
+      if (index === null) continue
+      const meme = Number.isInteger(index) ? this.memes[index] : undefined
+      if (!meme || meme.playerId === pl.id) continue
+      buddyPicks.push({ picker: pl, index })
+      buddyPlayerIds[index].push(pl.id)
+    }
+    const picks: BuddyPickInput[] = buddyPicks.map(({ picker, index }) => ({
+      playerId: picker.id,
+      index,
+    }))
+    const { memeScores, memeBuddyCounts, pickerBonuses } = computeBuddyOutcome(
+      voteScored.map((entry) => entry.voteScore),
+      picks,
+    )
+    const scored = voteScored.map((entry, index) => ({
+      ...entry,
+      score: memeScores[index],
+      buddyCount: memeBuddyCounts[index],
+      buddyBonus: MEME_BUDDY_POINTS * memeBuddyCounts[index],
+      buddyPlayerIds: buddyPlayerIds[index],
+    }))
+
     const players: RoundResult['players'] = {}
+    const totals: Record<string, number> = {}
+    const roundTotals: Record<string, number> = {}
     for (const pl of this.players.values()) {
       players[pl.id] = { username: pl.username, avatar: pl.avatar, color: pl.color }
+      // The picker bonus is earned in addition to the player's own meme score.
+      const entry = scored.find((m) => m.meme.playerId === pl.id)
+      const memeScore = entry ? entry.score : 0
+      const roundTotal = memeScore + (pickerBonuses[pl.id] ?? 0)
+      pl.totalScore += roundTotal
+      pl.roundScores.push(roundTotal)
+      totals[pl.id] = pl.totalScore
+      roundTotals[pl.id] = roundTotal
     }
+    const buddies: RoundBuddyPick[] = buddyPicks.map(({ picker, index }) => {
+      const target = this.memes[index]
+      return {
+        playerId: picker.id,
+        username: picker.username,
+        targetPlayerId: target.playerId,
+        targetUsername: target.username,
+        index,
+        bonus: pickerBonuses[picker.id] ?? 0,
+      }
+    })
+
     const result: RoundResult = {
       round: this.round,
-      memes: scored.map(({ meme, index, votes, score }) => ({
+      memes: scored.map(({ meme, index, votes, voteScore, score, buddyBonus, buddyCount, buddyPlayerIds: ids }) => ({
         index,
         playerId: meme.playerId,
         username: meme.username,
         score,
+        voteScore,
+        buddyBonus,
+        buddyCount,
+        buddyPlayerIds: ids,
+        template: meme.template,
+        submission: meme.submission,
         up: votes.up,
         down: votes.down,
         meh: votes.meh,
         rank: 1 + scored.filter((entry) => entry.score > score).length,
       })),
-      totals: {},
+      totals,
+      roundTotals,
+      buddies,
       players,
-    }
-    for (const pl of this.players.values()) {
-      const entry = result.memes.find((m) => m.playerId === pl.id)
-      const score = entry ? entry.score : 0
-      pl.totalScore += score
-      pl.roundScores.push(score)
-      result.totals[pl.id] = pl.totalScore
     }
 
     // collect the round's memes (scored) for the final gallery; keep the boxes so
     // legacy fixed-template texts still render in the gallery and downloads
-    for (const { meme, score } of scored) {
+    for (const { meme, score, buddyCount } of scored) {
       this.finalMemes.push({
         playerId: meme.playerId,
         username: meme.username,
@@ -592,6 +654,7 @@ export class Lobby {
         template: meme.template,
         submission: clone(meme.submission),
         score,
+        buddyCount,
         round: this.round,
       })
     }
@@ -601,9 +664,9 @@ export class Lobby {
     this.hooks.broadcast(Events.RoundResults, result)
 
     if (this.round >= this.totalRounds) {
-      this.schedule(() => this.gameOver(), 6000)
+      this.schedule(() => this.gameOver(), 10000)
     } else {
-      this.schedule(() => this.beginRound(this.round + 1), 6000)
+      this.schedule(() => this.beginRound(this.round + 1), 10000)
     }
   }
 
@@ -653,6 +716,7 @@ export class Lobby {
     this.players.forEach((pl) => {
       pl.submission = null
       pl.votes = {}
+      pl.buddyIndex = null
       pl.submittedRounds = 0
       pl.totalScore = 0
       pl.roundScores = []
@@ -730,6 +794,27 @@ export class Lobby {
     return null
   }
 
+  /**
+   * Give another player's current meme your Meme Buddy (once per round).
+   * The pick is private: only the picker gets a confirmation, and only the
+   * picker sees it again on resume during the voting phase.
+   */
+  pickBuddy(socketId: string, index: number): string | null {
+    const p = this.playerBySocket(socketId)
+    if (!p) return 'Unknown player.'
+    if (this.phase !== 'voting') return 'Not in the voting phase.'
+    if (!p.submission) return 'You did not submit a meme this round.'
+    if (!Number.isInteger(index) || index < 0 || index >= this.memes.length) return 'Unknown meme.'
+    if (index !== this.currentMeme) return 'This meme is not up for voting.'
+    const meme = this.memes[index]
+    if (!meme || meme.playerId === p.id) return 'You cannot pick your own meme.'
+    if (p.buddyIndex !== null) return 'You already picked your Meme Buddy this round.'
+
+    p.buddyIndex = index
+    this.hooks.sendTo(socketId, Events.BuddyPicked, { index })
+    return null
+  }
+
   // ------------------------------------------------------------------ reconnect
 
   resume(socketId: string, playerId: string | null): string | null {
@@ -768,8 +853,9 @@ export class Lobby {
         count: this.memes.length,
         current: this.currentMeme,
         timeLeft: Math.max(0, Math.ceil((this.memeSwitchAt - Date.now()) / 1000)),
-        // Only the resuming socket gets its own votes back; tallies stay secret.
+        // Only the resuming socket gets its own votes and buddy pick back; tallies stay secret.
         votes: pl?.votes ?? {},
+        buddyIndex: pl?.buddyIndex ?? null,
       })
     } else if (this.phase === 'roundResults' && this.lastRoundResult) {
       send(Events.RoundResults, this.lastRoundResult)

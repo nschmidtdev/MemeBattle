@@ -7,6 +7,14 @@ meme-maker wins. No accounts, no filters, no mercy.
 ## Features
 
 - **Core loop** — lobby → caption timer → synced voting → round results → ranking.
+- **Meme Buddy** — once per round you can pick one other player's meme (only the
+  one currently on screen) as your Buddy. You get half of its final points,
+  positive or negative, and the meme gets +10 per Buddy. Picks stay secret until
+  the round results.
+- **Ranked round gallery** — every round ends with a gallery of that round's
+  memes, best first. Cards show rank, final score, the +10×N Buddy bonus and who
+  picked the meme. Next to it: the round podium, a full round ranking with
+  `Meme ±X · Buddy ±Y` breakdown, and the cumulative overall standings.
 - **Private & public lobby** — share a 5-letter code with your group, or join a
   public lobby. Up to 30 players per lobby.
 - **Guest play** — just pick a name and play, no sign-up.
@@ -92,10 +100,12 @@ ADMIN_EMAIL=admin@localhost ADMIN_PASSWORD="your-dev-password" npx tsx scripts/e
 3. When the round starts, everyone gets one template — caption it before time runs
    out. Once **everyone** has submitted, voting starts right away.
 4. Memes are shown one at a time; upvote, downvote, or "meh". Votes are synced and
-   can be changed while the meme is on screen.
+   can be changed while the meme is on screen. Once per round you can also make
+   one other player's meme your **Meme Buddy** (not your own): you get half of its
+   final points, positive or negative, and it gets +10 per Buddy.
 5. At the end of the round, points are scored from the vote tallies
-   (`1000 * (up − down) / (up + down)`, range −1000…+1000) and added to your total.
-   You can't vote for your own meme.
+   (`1000 * (up − down) / (up + down)`, range −1000…+1000), plus the Meme Buddy
+   bonuses, and added to your total. You can't vote for your own meme.
 6. After the final round, the ranking is revealed.
 
 ## Configuration

@@ -14,6 +14,9 @@ interface Props {
   initialVotes?: Record<number, VoteValue>
   /** Latest vote rejection; used to roll back the optimistic highlight. */
   voteError?: { message: string; nonce: number } | null
+  /** This player's own Meme Buddy pick, if already made this round. */
+  buddyIndex: number | null
+  onPickBuddy: (index: number) => void
 }
 
 const VOTE_BTNS: Array<{ value: VoteValue; label: string; emoji: string; active: string }> = [
@@ -22,7 +25,17 @@ const VOTE_BTNS: Array<{ value: VoteValue; label: string; emoji: string; active:
   { value: 'down', label: 'Cringe', emoji: '👎', active: 'border-rose bg-rose/20 text-rose ring-2 ring-rose/60' },
 ]
 
-export default function VotingView({ round, memes, current, myId, onVote, initialVotes, voteError }: Props) {
+export default function VotingView({
+  round,
+  memes,
+  current,
+  myId,
+  onVote,
+  initialVotes,
+  voteError,
+  buddyIndex,
+  onPickBuddy,
+}: Props) {
   const [myVotes, setMyVotes] = useState<Record<number, VoteValue>>(() => ({ ...(initialVotes ?? {}) }))
   /** Index of the meme whose canvas finished rendering — vote only on that one. */
   const [renderedIndex, setRenderedIndex] = useState<number | null>(null)
@@ -66,9 +79,13 @@ export default function VotingView({ round, memes, current, myId, onVote, initia
   }
 
   const isOwn = meme.playerId === myId
+  /** Submitted nothing this round: no votes and no Buddy pick. */
+  const isSpectator = myId !== null && !memes.some((m) => m.playerId === myId)
   const myVote = myVotes[current]
   const ready = renderedIndex === current
   const progress = memes.length > 0 ? ((current + 1) / memes.length) * 100 : 0
+  const buddyMeme = buddyIndex !== null ? (memes[buddyIndex] ?? null) : null
+  const buddyIsCurrent = buddyIndex !== null && buddyIndex === current
 
   const vote = (value: VoteValue) => {
     if (!ready || isOwn) return
@@ -128,31 +145,79 @@ export default function VotingView({ round, memes, current, myId, onVote, initia
 
         {/* sticky footer keeps the vote bar reachable without scrolling */}
         <div className="sticky bottom-0 z-10 border-t border-line bg-night2/95 p-3 backdrop-blur">
-          {isOwn ? (
+          {isSpectator ? (
             <p className="text-center text-sm text-dim">
-              😎 That&apos;s your masterpiece — you can&apos;t vote on it.
+              👀 You didn&apos;t submit a meme this round — spectating.
             </p>
           ) : (
-            <div className="grid grid-cols-3 gap-2 sm:gap-3">
-              {VOTE_BTNS.map(({ value, label, emoji, active }) => (
-                <button
-                  key={value}
-                  className={`flex flex-col items-center gap-1 rounded-2xl border border-line bg-night2 py-3 transition hover:border-dim hover:bg-card2 active:translate-y-px disabled:cursor-default disabled:opacity-50 disabled:hover:border-line disabled:hover:bg-night2 ${
-                    myVote === value ? active : ''
-                  }`}
-                  disabled={!ready}
-                  onClick={() => vote(value)}
-                >
-                  <span className="text-3xl leading-none">{emoji}</span>
-                  <span className="text-sm font-bold">{label}</span>
-                </button>
-              ))}
-            </div>
-          )}
+            <>
+              {isOwn ? (
+                <p className="text-center text-sm text-dim">
+                  😎 That&apos;s your masterpiece — you can&apos;t vote on it.
+                </p>
+              ) : (
+                <div className="grid grid-cols-3 gap-2 sm:gap-3">
+                  {VOTE_BTNS.map(({ value, label, emoji, active }) => (
+                    <button
+                      key={value}
+                      className={`flex flex-col items-center gap-1 rounded-2xl border border-line bg-night2 py-3 transition hover:border-dim hover:bg-card2 active:translate-y-px disabled:cursor-default disabled:opacity-50 disabled:hover:border-line disabled:hover:bg-night2 ${
+                        myVote === value ? active : ''
+                      }`}
+                      disabled={!ready}
+                      onClick={() => vote(value)}
+                    >
+                      <span className="text-3xl leading-none">{emoji}</span>
+                      <span className="text-sm font-bold">{label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
 
-          <p className="mt-3 text-center text-xs text-dim">
-            {isOwn ? '🤫 Votes stay secret until the results' : ready ? '🤫 Votes stay secret until the results' : 'Preparing meme…'}
-          </p>
+              {/* Meme Buddy: one secret pick per round, only on the shown meme. */}
+              <div className="mt-3 border-t border-line/70 pt-3">
+                <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-bold">🤝 Meme Buddy</p>
+                    <p className="text-[11px] leading-snug text-dim">
+                      One pick per round · you get half of its final points (positive or negative) · the meme gets
+                      +10 per buddy.
+                    </p>
+                  </div>
+                  <div className="flex-none">
+                    {buddyIndex === null ? (
+                      isOwn ? (
+                        <span className="text-xs text-dim">Pick another player&apos;s meme.</span>
+                      ) : (
+                        <button
+                          className="rounded-xl border border-sun/70 bg-sun/10 px-3 py-2 text-sm font-bold text-sun transition hover:bg-sun/20 active:translate-y-px disabled:cursor-default disabled:opacity-50 disabled:hover:bg-sun/10"
+                          title="Make the currently shown meme your Meme Buddy"
+                          disabled={!ready}
+                          onClick={() => onPickBuddy(current)}
+                        >
+                          🤝 Make this my Meme Buddy
+                        </button>
+                      )
+                    ) : buddyIsCurrent ? (
+                      <span className="inline-flex rounded-xl border border-sun bg-sun/15 px-3 py-2 text-sm font-bold text-sun ring-2 ring-sun/50">
+                        🤝 Your Meme Buddy
+                      </span>
+                    ) : (
+                      <span
+                        className="inline-flex rounded-xl border border-line bg-night px-3 py-2 text-sm font-semibold text-dim"
+                        title="One Meme Buddy pick per round"
+                      >
+                        🤝 Meme Buddy: {buddyMeme?.username ?? 'picked'}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <p className="mt-3 text-center text-xs text-dim">
+                {isOwn || ready ? '🤫 Votes stay secret until the results' : 'Preparing meme…'}
+              </p>
+            </>
+          )}
         </div>
       </div>
     </section>

@@ -252,6 +252,16 @@ export function initSockets(io: Server): () => void {
     )
 
     socket.on(
+      Events.BuddyPick,
+      guard(socket, Events.BuddyPick, (data: Record<string, unknown>) => {
+        const b = socket.data.mb as BoundSocket | undefined
+        if (!b) return
+        const err = b.lobby.pickBuddy(socket.id, Number(data?.index))
+        if (err) emitError(socket, err)
+      }),
+    )
+
+    socket.on(
       Events.PlayAgain,
       guard(socket, Events.PlayAgain, () => {
         const b = socket.data.mb as BoundSocket | undefined

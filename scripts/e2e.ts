@@ -469,11 +469,25 @@ async function runSuite() {
       : waitEventWhere<any>(A, 'voting:progress', (p: any) => p.index === ownOfB, 30000)
   // Meme 1 must actually be current before the second vote; otherwise the
   // server rejects it with "not up for voting" and the tie never happens.
-  const meme1Shown = waitEventWhere<any>(A, 'voting:progress', (p: any) => p.index === 1, 30000)
+  const meme1ShownA = waitEventWhere<any>(A, 'voting:progress', (p: any) => p.index === 1, 30000)
+  const meme1ShownB = waitEventWhere<any>(B, 'voting:progress', (p: any) => p.index === 1, 30000)
+
+  // Collect every buddy ack on both sockets: the picker-only contract is
+  // proven by the non-picker never seeing `buddy:picked` (see below).
+  const aBuddyAcks: any[] = []
+  const bBuddyAcks: any[] = []
+  A.on('buddy:picked', (d) => aBuddyAcks.push(d))
+  B.on('buddy:picked', (d) => bBuddyAcks.push(d))
 
   const votesCast: Record<string, boolean> = { a: false, b: false }
 
   // Meme 0: only its non-owner can vote; upvotes from both sides create a tie.
+  // The same non-owner is also the Meme Buddy picker for this meme.
+  const picker0 = ownOfA === 0 ? B : A
+  const picker0Id = ownOfA === 0 ? jB.playerId : jA.playerId
+  const observer0Acks = ownOfA === 0 ? aBuddyAcks : bBuddyAcks
+  const picker0Acks = ownOfA === 0 ? bBuddyAcks : aBuddyAcks
+
   if (ownOfA === 0) {
     B.emit('vote:cast', { index: 0, value: 'up' })
     votesCast.b = true
@@ -496,10 +510,46 @@ async function runSuite() {
     ok('own-meme vote rejected (B, index 0)', ownErrData?.message?.includes('own meme') === true, ownErrData)
   }
 
-  await bOwnShown
-  await meme1Shown
+  // Meme Buddy for the current meme 0: the non-owner picks it once.
+  const buddy0Ack = waitEvent<any>(picker0, 'buddy:picked', 5000)
+  picker0.emit('buddy:pick', { index: 0 })
+  const buddy0 = await buddy0Ack
+  ok('buddy pick acked to the picker (index 0)', buddy0?.index === 0, buddy0)
 
-  // Meme 1: the other player upvotes it, so both memes end with one upvote.
+  // Only one buddy pick per round and player.
+  const buddyTwiceErr = waitEvent<any>(picker0, 'client:error', 5000)
+  picker0.emit('buddy:pick', { index: 0 })
+  const buddyTwiceErrData = await buddyTwiceErr
+  ok(
+    'second buddy pick in the same round rejected',
+    /already/i.test(String(buddyTwiceErrData?.message ?? '')),
+    buddyTwiceErrData,
+  )
+
+  // The owner of the current meme 0 has not picked yet, so this isolates the
+  // own-meme rule from the "already picked" rule. Their later pick at meme 1
+  // also proves the rejected attempt did not consume their buddy.
+  const owner0 = ownOfA === 0 ? A : B
+  const owner0Err = waitEvent<any>(owner0, 'client:error', 5000)
+  owner0.emit('buddy:pick', { index: 0 })
+  const owner0ErrData = await owner0Err
+  ok('own-meme buddy pick rejected', /own/i.test(String(owner0ErrData?.message ?? '')), owner0ErrData)
+
+  await bOwnShown
+  await Promise.all([meme1ShownA, meme1ShownB])
+
+  // The observer received the later voting:progress for meme 1, so a wrongly
+  // broadcast ack for meme 0 would already have arrived (same connection order).
+  ok(
+    'buddy:picked is not broadcast to the other player',
+    observer0Acks.length === 0 && picker0Acks.length === 1,
+    { observerAcks: observer0Acks, pickerAcks: picker0Acks },
+  )
+
+  // Meme 1: the other player upvotes it, so both memes end with one upvote,
+  // and also gives the Meme Buddy for meme 1.
+  const picker1 = ownOfA === 1 ? B : A
+  const picker1Id = ownOfA === 1 ? jB.playerId : jA.playerId
   if (ownOfB === 1) {
     const ownErr = waitEvent<any>(B, 'client:error', 5000)
     B.emit('vote:cast', { index: 1, value: 'down' })
@@ -511,6 +561,10 @@ async function runSuite() {
     B.emit('vote:cast', { index: 1, value: 'up' })
     votesCast.b = true
   }
+  const buddy1Ack = waitEvent<any>(picker1, 'buddy:picked', 5000)
+  picker1.emit('buddy:pick', { index: 1 })
+  const buddy1 = await buddy1Ack
+  ok('buddy pick acked to the picker (index 1)', buddy1?.index === 1, buddy1)
   ok('both players voted', votesCast.a && votesCast.b, votesCast)
 
   const resA = await resP
@@ -523,16 +577,58 @@ async function runSuite() {
       !!resA.players[jA.playerId]?.color,
     resA?.players,
   )
-  // Mutual upvotes -> 1000 each, shared rank 1 on every meme.
+  // Mutual upvotes -> 1000 vote points; one Meme Buddy per meme -> +10 -> 1010.
   ok(
-    'round memes carry shared rank 1 and 1000 points',
-    resA?.memes?.every((m: any) => m.rank === 1 && m.score === 1000),
+    'round memes carry shared rank 1 and 1010 points',
+    resA?.memes?.every((m: any) => m.rank === 1 && m.voteScore === 1000 && m.score === 1010),
     resA?.memes,
   )
+  // Gallery data for the new round gallery: template image + submitted lines.
+  const galleryB = resA?.memes?.find((m: any) => m.playerId === jB.playerId)
   ok(
-    'round totals are tied at 1000',
-    resA?.totals?.[jA.playerId] === 1000 && resA?.totals?.[jB.playerId] === 1000,
-    resA?.totals,
+    'round:results memes carry template.imageKey and submission.lines',
+    resA?.memes?.every(
+      (m: any) =>
+        typeof m.template?.imageKey === 'string' &&
+        m.template.imageKey.length > 0 &&
+        Array.isArray(m.submission?.lines),
+    ) && galleryB?.submission?.lines?.length === 1,
+    resA?.memes?.map((m: any) => ({
+      imageKey: m.template?.imageKey,
+      lines: m.submission?.lines?.length,
+    })),
+  )
+  // Each meme was picked by exactly one buddy and awarded +10.
+  ok(
+    'round memes carry buddyCount, buddyBonus and buddyPlayerIds',
+    resA?.memes?.every(
+      (m: any) =>
+        m.buddyCount === 1 &&
+        m.buddyBonus === 10 &&
+        Array.isArray(m.buddyPlayerIds) &&
+        m.buddyPlayerIds.length === 1 &&
+        m.buddyPlayerIds[0] === (m.index === 0 ? picker0Id : picker1Id),
+    ),
+    resA?.memes,
+  )
+  // 1010 meme points + 505 buddy bonus (half of 1010) -> 1515 per player.
+  ok(
+    'round totals are tied at 1515',
+    resA?.roundTotals?.[jA.playerId] === 1515 && resA?.roundTotals?.[jB.playerId] === 1515,
+    resA?.roundTotals,
+  )
+  const buddyPicks: any[] = Array.isArray(resA?.buddies) ? resA.buddies : []
+  const buddyTargets = buddyPicks.map((b: any) => b?.targetPlayerId).sort()
+  const expectedTargets =
+    resA?.memes?.length === 2
+      ? [resA.memes[0]?.playerId, resA.memes[1]?.playerId].sort()
+      : []
+  ok(
+    'round:results lists both buddy picks with their bonus',
+    buddyPicks.length === 2 &&
+      buddyPicks.every((b: any) => b?.bonus === 505) &&
+      JSON.stringify(buddyTargets) === JSON.stringify(expectedTargets),
+    resA?.buddies,
   )
 
   const over = await gameOverP
@@ -542,9 +638,22 @@ async function runSuite() {
     over?.ranking,
   )
   ok(
+    'game:over totals and rounds include the buddy bonus',
+    over?.ranking?.length === 2 &&
+      over.ranking.every(
+        (r: any) => r.total === 1515 && Array.isArray(r.rounds) && r.rounds.length === 1 && r.rounds[0] === 1515,
+      ),
+    over?.ranking,
+  )
+  ok(
     'game:over carries meme gallery',
     over?.memes?.length === 2 && over.memes.every((m: any) => m.template?.imageKey && m.submission),
     { memes: over?.memes?.length },
+  )
+  ok(
+    'game:over memes carry buddyCount',
+    over?.memes?.length === 2 && over.memes.every((m: any) => m.buddyCount === 1),
+    over?.memes?.map((m: any) => m.buddyCount),
   )
   ok('game:over totalRounds', over?.totalRounds === 1, over?.totalRounds)
 
@@ -809,6 +918,17 @@ async function runSuite() {
     nonSubmitterErrData,
   )
 
+  // A non-submitter cannot give a Meme Buddy either, even for a foreign meme.
+  const nonSubmitterBuddyErr = waitEvent<any>(S1, 'client:error', 5000)
+  S1.emit('buddy:pick', { index: 0 })
+  const nonSubmitterBuddyErrData = await nonSubmitterBuddyErr
+  ok(
+    'non-submitter buddy pick rejected with a submit error',
+    typeof nonSubmitterBuddyErrData?.message === 'string' &&
+      nonSubmitterBuddyErrData.message.toLowerCase().includes('submit'),
+    nonSubmitterBuddyErrData,
+  )
+
   const sResultsData = await sResults
   ok(
     'non-submitter round still ends with results',
@@ -868,6 +988,10 @@ async function runSuite() {
     8000,
   )
   voter.emit('vote:cast', { index: 0, value: 'up' })
+  // Give the buddy as well; the ack proves the server processed it before the leave.
+  const voterBuddyAck = waitEvent<any>(voter, 'buddy:picked', 5000)
+  voter.emit('buddy:pick', { index: 0 })
+  await voterBuddyAck
   voter.emit('lobby:leave')
   await ghosted
 
@@ -889,9 +1013,101 @@ async function runSuite() {
       (vrResumeData?.current === 0 || vrResumeData?.current === 1),
     vrResumeData,
   )
+  ok(
+    'voting resume returns the buddy pick',
+    vrResumeData?.buddyIndex === 0,
+    vrResumeData,
+  )
   V1.disconnect()
   V2.disconnect()
   VR.disconnect()
+
+  // ------------------------------------------------------------- negative buddy bonus
+  // Downvote + buddy on BOTH memes: vote score -1000, +10 buddy -> -990 per meme,
+  // picker bonus -495 (half of -990), player round total -1485.
+  console.log('\nRegression: negative buddy bonus (downvote + buddy):')
+  const Neg1 = await openSocket()
+  const Neg2 = await openSocket()
+  const neg1Updates: any[] = []
+  Neg1.on('lobby:update', (d) => neg1Updates.push(d))
+
+  const neg1Joined = waitEvent<any>(Neg1, 'lobby:joined', 10000)
+  Neg1.emit('lobby:join', {
+    username: 'NegA',
+    create: true,
+    isPublic: false,
+    lobbyName: 'E2E Negative Buddy',
+    settings: { rounds: 1, captionTime: 15, voteTime: 5, packIds: [pack.id] },
+  })
+  const neg1: { code: string; playerId: string } = await neg1Joined
+  const neg2Joined = waitEvent<any>(Neg2, 'lobby:joined', 10000)
+  Neg2.emit('lobby:join', { username: 'NegB', code: neg1.code })
+  const neg2: { code: string; playerId: string } = await neg2Joined
+  await until(() => (latest(neg1Updates)?.players?.length ?? 0) >= 2, 5000, '2 negative-test players')
+
+  const nCaption = waitEvent<any>(Neg1, 'phase:caption', 10000)
+  const nTpl1 = waitEvent<any>(Neg1, 'caption:template', 15000)
+  const nTpl2 = waitEvent<any>(Neg2, 'caption:template', 15000)
+  const nVoting = waitEvent<any>(Neg1, 'phase:voting', 30000)
+  Neg1.emit('lobby:start')
+  await nCaption
+  await Promise.all([nTpl1, nTpl2])
+
+  Neg1.emit('caption:submit', { texts: { n: 'neg one' }, lines: [] })
+  Neg2.emit('caption:submit', { texts: { n: 'neg two' }, lines: [] })
+  const nVotingData = await nVoting
+
+  const nResultsP = waitEvent<any>(Neg1, 'round:results', 40000)
+  const nMeme1Shown1 = waitEventWhere<any>(Neg1, 'voting:progress', (p: any) => p.index === 1, 30000)
+  const nMeme1Shown2 = waitEventWhere<any>(Neg2, 'voting:progress', (p: any) => p.index === 1, 30000)
+
+  // Meme 0: its non-owner downvotes and gives the buddy.
+  const nOwner0IsA = nVotingData.memes?.[0]?.playerId === neg1.playerId
+  const nVoter0 = nOwner0IsA ? Neg2 : Neg1
+  nVoter0.emit('vote:cast', { index: 0, value: 'down' })
+  const nBuddy0Ack = waitEvent<any>(nVoter0, 'buddy:picked', 5000)
+  nVoter0.emit('buddy:pick', { index: 0 })
+  await nBuddy0Ack
+
+  await Promise.all([nMeme1Shown1, nMeme1Shown2])
+
+  // Meme 1: the other player is its non-owner, downvotes and gives the buddy.
+  const nVoter1 = nOwner0IsA ? Neg1 : Neg2
+  nVoter1.emit('vote:cast', { index: 1, value: 'down' })
+  const nBuddy1Ack = waitEvent<any>(nVoter1, 'buddy:picked', 5000)
+  nVoter1.emit('buddy:pick', { index: 1 })
+  await nBuddy1Ack
+
+  const nRes = await nResultsP
+  ok(
+    'negative: downvoted memes score -990 with one buddy',
+    nRes?.memes?.length === 2 &&
+      nRes.memes.every(
+        (m: any) =>
+          m.voteScore === -1000 &&
+          m.up === 0 &&
+          m.down === 1 &&
+          m.buddyBonus === 10 &&
+          m.buddyCount === 1 &&
+          m.score === -990 &&
+          m.rank === 1,
+      ),
+    nRes?.memes,
+  )
+  const nBuddies: any[] = Array.isArray(nRes?.buddies) ? nRes.buddies : []
+  ok(
+    'negative: buddy bonus is negative (-495)',
+    nBuddies.length === 2 && nBuddies.every((b: any) => b?.bonus === -495),
+    nRes?.buddies,
+  )
+  ok(
+    'negative: roundTotals include the negative bonus',
+    nRes?.roundTotals?.[neg1.playerId] === -1485 && nRes?.roundTotals?.[neg2.playerId] === -1485,
+    nRes?.roundTotals,
+  )
+
+  Neg1.disconnect()
+  Neg2.disconnect()
 
   // ------------------------------------------------------------- admin API (auth + validation)
   console.log('\nAdmin API (auth + validation):')

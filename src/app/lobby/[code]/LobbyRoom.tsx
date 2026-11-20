@@ -43,6 +43,8 @@ interface VotingState {
   current: number
   /** Votes this player already cast, restored on reconnect. */
   votes: Record<number, VoteValue>
+  /** This player's own Meme Buddy pick for the round (secret until results). */
+  buddyIndex: number | null
 }
 
 type CopyState = 'idle' | 'ok' | 'fail'
@@ -204,14 +206,23 @@ export default function LobbyRoom({ code }: { code: string }) {
       current,
       timeLeft,
       votes,
+      buddyIndex,
     }: {
       round: number
       memes: MemeInfo[]
       current: number
       timeLeft: number
       votes?: Record<number, VoteValue>
+      buddyIndex?: number | null
     }) => {
-      setVoting({ round, memes, current, votes: votes ?? {} })
+      setVoting({
+        round,
+        memes,
+        current,
+        votes: votes ?? {},
+        // Resume payloads carry the player's own pick; older payloads omit it.
+        buddyIndex: typeof buddyIndex === 'number' ? buddyIndex : null,
+      })
       setCaption(null)
       setRoundResult(null)
       setGameOver(null)
@@ -224,6 +235,11 @@ export default function LobbyRoom({ code }: { code: string }) {
       setVoting((prev) => (prev ? { ...prev, current: index } : prev))
       startTimer(timeLeft)
       sounds.memeShown()
+    }
+
+    const onBuddyPicked = ({ index }: { index: number }) => {
+      // Only the picker receives this event; it confirms the one pick per round.
+      setVoting((prev) => (prev ? { ...prev, buddyIndex: index } : prev))
     }
 
     const onRoundResults = (r: RoundResult) => {
@@ -252,6 +268,7 @@ export default function LobbyRoom({ code }: { code: string }) {
     socket.on(Events.CaptionTemplate, onCaptionTemplate)
     socket.on(Events.PhaseVoting, onPhaseVoting)
     socket.on(Events.VotingProgress, onVotingProgress)
+    socket.on(Events.BuddyPicked, onBuddyPicked)
     socket.on(Events.RoundResults, onRoundResults)
     socket.on(Events.GameOver, onGameOver)
     socket.on('connect', onConnect)
@@ -283,6 +300,7 @@ export default function LobbyRoom({ code }: { code: string }) {
       socket.off(Events.CaptionTemplate, onCaptionTemplate)
       socket.off(Events.PhaseVoting, onPhaseVoting)
       socket.off(Events.VotingProgress, onVotingProgress)
+      socket.off(Events.BuddyPicked, onBuddyPicked)
       socket.off(Events.RoundResults, onRoundResults)
       socket.off(Events.GameOver, onGameOver)
       socket.off('connect', onConnect)
@@ -354,6 +372,9 @@ export default function LobbyRoom({ code }: { code: string }) {
     socketRef.current?.emit(Events.Vote, { index, value })
     sounds.vote()
   }, [])
+  const pickBuddy = useCallback((index: number) => {
+    socketRef.current?.emit(Events.BuddyPick, { index })
+  }, [])
   const sendSettings = useCallback((patch: Partial<LobbyState['settings']>) => {
     socketRef.current?.emit(Events.Settings, patch)
   }, [])
@@ -416,7 +437,11 @@ export default function LobbyRoom({ code }: { code: string }) {
   ) : null
 
   return (
-    <div className={`mx-auto px-3 pb-16 sm:px-4 ${state?.phase === 'gameOver' ? 'max-w-6xl' : 'max-w-4xl'}`}>
+    <div
+      className={`mx-auto px-3 pb-16 sm:px-4 ${
+        state?.phase === 'gameOver' || state?.phase === 'roundResults' ? 'max-w-6xl' : 'max-w-4xl'
+      }`}
+    >
       {/* ------------------------------------------------------------ top bar */}
       <header className="sticky top-0 z-40 -mx-3 mb-4 border-b border-line/60 bg-night/85 px-3 py-2.5 backdrop-blur-md sm:-mx-4 sm:px-4">
         <div className="flex flex-wrap items-center gap-2">
@@ -591,6 +616,8 @@ export default function LobbyRoom({ code }: { code: string }) {
           initialVotes={voting.votes}
           voteError={voteError}
           onVote={castVote}
+          buddyIndex={voting.buddyIndex}
+          onPickBuddy={pickBuddy}
         />
       ) : state.phase === 'roundResults' && roundResult ? (
         <ResultsView
